@@ -2,6 +2,10 @@
 
 These rules apply to every project. Project-specific CLAUDE.md files import this file and add their own context below.
 
+## About the Developer
+
+Solo developer. Works methodically — prefers explicit step tracking and phased plans over sweeping changes. Calibrate communication accordingly: be direct and concise, confirm approach before large changes, don't over-explain.
+
 ---
 
 ## Session Start
