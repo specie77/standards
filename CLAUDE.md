@@ -58,6 +58,24 @@ while True:
 
 After 20 consecutive failures, send a personal alert; retries continue silently after.
 
+## Pull Request Workflow
+
+Always run the relevant tests (unit, integration, or live test mode) and confirm they pass *before* merging a PR to main.
+
+## GitHub CLI (gh)
+
+Never pass multiline content inline to `gh` commands. Write the body to a temp file and use `--body-file`:
+
+```bash
+cat > /tmp/gh_body.md << 'EOF'
+content here
+EOF
+gh pr create --title "..." --body-file /tmp/gh_body.md
+rm /tmp/gh_body.md
+```
+
+Multiline strings in `--body` break the `gh *` allowlist pattern match and trigger permission prompts.
+
 ## Documentation
 
 - Feature requests and future enhancements → open a GitHub issue.
