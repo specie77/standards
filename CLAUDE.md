@@ -62,6 +62,17 @@ while True:
 
 After 20 consecutive failures, send a personal alert; retries continue silently after.
 
+## File Editing
+
+Never use `sed` to edit files. It is error-prone (silent failures, regex escaping pitfalls, in-place behavior varies by platform) and requires user approval for each invocation.
+
+Use the dedicated tools instead:
+- **Edit a file**: `Edit` tool (exact string replacement, verified)
+- **Write a new file**: `Write` tool
+- **Read a file**: `Read` tool (not `cat`, `head`, or `tail`)
+
+For one-off shell transformations where `sed` would normally be used (e.g. stripping a prefix, substituting a value in a generated string), use Python inline: `python3 -c "..."` or a short script.
+
 ## Pull Request Workflow
 
 Always run the relevant tests (unit, integration, or live test mode) and confirm they pass *before* merging a PR to main.
@@ -79,7 +90,6 @@ rm /tmp/gh_body.md
 ```
 
 Multiline strings in `--body` break the `gh *` allowlist pattern match and trigger permission prompts.
-
 ## Documentation
 
 - Feature requests and future enhancements → open a GitHub issue.
