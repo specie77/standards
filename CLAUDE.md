@@ -12,6 +12,8 @@ Solo developer. Works methodically — prefers explicit step tracking and phased
 
 Run `git fetch origin` at the start of every session. If the remote is ahead, pull immediately without asking.
 
+If the repo has git submodules, also run `git submodule update --remote --merge` to pull the latest from each submodule's remote. Do this every session without asking.
+
 ## Git Commands
 
 Always use `git -C /path/to/repo` instead of `cd /path && git`. No exceptions.
