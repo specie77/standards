@@ -94,3 +94,15 @@ Multiline strings in `--body` break the `gh *` allowlist pattern match and trigg
 
 - Feature requests and future enhancements → open a GitHub issue.
 - Core build functionality, standards, architecture, operational runbooks → `.md` files in `docs/`.
+
+
+## New Agent Checklist
+When adding a new agent directory (e.g. `foo-trader/`) that contains a
+`requirements.txt` or `Dockerfile`, you MUST add corresponding Dependabot
+entries to `.github/dependabot.yml` in the consuming repo:
+
+- `package-ecosystem: pip` with `directory: /foo-trader`
+- `package-ecosystem: docker` with `directory: /foo-trader` (if a Dockerfile exists)
+
+Missing entries mean dependency updates will not be tracked for that agent.
+
