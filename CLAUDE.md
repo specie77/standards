@@ -83,15 +83,14 @@ Always run the relevant tests (unit, integration, or live test mode) and confirm
 
 Never pass multiline content inline to `gh` commands. Write the body to a temp file and use `--body-file`:
 
-```bash
-cat > /tmp/gh_body.md << 'EOF'
-content here
-EOF
+```
+# 1. Write tool → /tmp/gh_body.md
+# 2. Bash:
 gh pr create --title "..." --body-file /tmp/gh_body.md
 rm /tmp/gh_body.md
 ```
 
-Multiline strings in `--body` break the `gh *` allowlist pattern match and trigger permission prompts.
+Use the `Write` tool to create the temp file — not `cat` or `echo` in Bash (those are restricted). Multiline strings in `--body` break the `gh *` allowlist pattern match and trigger permission prompts.
 ## Documentation
 
 - Feature requests and future enhancements → open a GitHub issue.
