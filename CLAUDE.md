@@ -10,7 +10,7 @@ Solo developer. Works methodically — prefers explicit step tracking and phased
 
 ## Session Start
 
-Run `git fetch origin` at the start of every session. If the remote is ahead, pull immediately without asking.
+Run `git fetch --prune origin` at the start of every session. If the remote is ahead, pull immediately without asking. The `--prune` flag removes any local remote-tracking refs for branches already deleted on GitHub — keeping the local branch list in sync without touching anything on the remote.
 
 If the repo has git submodules, also run `git submodule update --remote --merge` to pull the latest from each submodule's remote. Do this every session without asking.
 
@@ -78,6 +78,8 @@ For one-off shell transformations where `sed` would normally be used (e.g. strip
 ## Pull Request Workflow
 
 Always run the relevant tests (unit, integration, or live test mode) and confirm they pass *before* merging a PR to main.
+
+After a PR is merged and its remote branch deleted on GitHub, run `git fetch --prune` to remove the stale `origin/*` tracking ref locally. Then delete the local branch with `git branch -d <branch>` (or `-D` if squash-merged). This keeps the local branch list in sync with GitHub.
 
 ## GitHub CLI (gh)
 
