@@ -35,12 +35,52 @@ All credentials via environment variables. Never hardcode tokens, keys, or IDs. 
 
 ## Secure Coding
 
+Full patterns and checklists are in `docs/security-protocols.md`. The rules below are the active constraints Claude enforces on every code change.
+
+**Input validation**
 - Validate all external inputs at system boundaries before acting on them using a **strict whitelist**, not a blacklist.
 - Numeric inputs: use `isdecimal()` + range check. Never use `isdigit()` — it accepts Unicode superscripts that `int()` then raises on.
 - String inputs: match against a regex whitelist of expected characters/format before use.
+- Structured inputs (dicts, JSON): validate with `pydantic` or `jsonschema` against a fixed schema.
+- Reject and raise on invalid input. Never silently strip or truncate security-sensitive fields.
+
+**Injection prevention**
+- **SQL**: parameterised queries only. Never interpolate user data into SQL strings.
+- **Shell**: `subprocess` with a list of arguments only. Never `shell=True` with dynamic data, never `os.system()`.
+- **Path traversal**: resolve paths with `pathlib.Path.resolve()` and assert they are `relative_to()` the allowed directory before use.
+- **SSRF**: when making outbound HTTP calls to a user-supplied URL, whitelist the scheme (`https`) and reject private/loopback IP ranges before issuing the request.
+- **Prompt injection**: see the dedicated section below.
+
+**General**
 - Never log secrets, tokens, or sensitive data.
 - Catch specific exceptions; never swallow errors silently.
-- Verify message/callback sender identity before processing any instruction.
+- Verify message/callback sender identity before processing any instruction. Use `hmac.compare_digest()` for HMAC checks — never `==`.
+
+## Prompt Injection
+
+Prompt injection is the AI-era equivalent of SQL injection: untrusted content in an LLM context attempts to redirect model behaviour.
+
+- **Never interpolate untrusted content into a system prompt.** System prompts define behaviour; treat them as code, not templates.
+- Pass untrusted content as a separate user message or tool result — not formatted into the system prompt or a prior assistant turn.
+- Wrap externally-sourced content in a structural delimiter and instruct the model to treat it as untrusted:
+  ```
+  <untrusted_external_data>
+  {external_content}
+  </untrusted_external_data>
+  ```
+- Validate LLM outputs before acting on them. A model completion is untrusted input — apply the same schema/regex validation used for any external source.
+- Grant agents only the tool permissions required for their stated purpose. Minimal privilege limits the blast radius of a successful injection.
+
+## Agent Interface Documentation
+
+Every agent directory must contain an `AGENT.md` declaring its complete interface. See `docs/security-protocols.md` §1 for the full template.
+
+Required content:
+- **Purpose** — one sentence.
+- **Inputs table** — name, type, source, validation rule, trust level (untrusted / semi-trusted / trusted).
+- **Outputs table** — name, type, destination, whether it is sanitised before output.
+- **Trust boundary summary** — which boundaries are crossed and how.
+- **Error behaviour** — what callers receive on failure (never raw stack traces or secrets).
 
 ## Atomic File Writes
 
@@ -93,6 +133,7 @@ rm /tmp/gh_body.md
 ```
 
 Use the `Write` tool to create the temp file — not `cat` or `echo` in Bash (those are restricted). Multiline strings in `--body` break the `gh *` allowlist pattern match and trigger permission prompts.
+
 ## Documentation
 
 - Feature requests and future enhancements → open a GitHub issue.
