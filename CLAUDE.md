@@ -148,7 +148,7 @@ Every repo must have `.github/dependabot.yml` with an entry for each package eco
 - `pip` — if the repo contains Python dependencies
 - `docker` — if the repo contains a `Dockerfile`
 
-Weekly schedule, Monday, with `open-pull-requests-limit` of 5–10 per ecosystem.
+Weekly schedule. Each project chooses its own day. Use `open-pull-requests-limit` of 5–10 per ecosystem.
 
 Before merging a Dependabot PR, confirm CI passes. If a bump fails due to an incompatible transitive dependency (e.g., `redis>=7` vs `celery<6`), close the PR with a comment explaining the blocker rather than leaving it stale.
 
