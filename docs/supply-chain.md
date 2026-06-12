@@ -45,6 +45,15 @@ Before adding any new package:
 - Maintain a CycloneDX (or SPDX) SBOM for the project's dependencies.
 - Regenerate it whenever the lockfile changes and commit it alongside the
   lockfile update.
+- Add a CI step that regenerates the SBOM from the locked requirements and
+  fails the build if it differs from the committed copy ("freshness check").
+  Since SBOM generators (e.g. `pip-audit --format=cyclonedx-json`) emit a
+  random `bom-ref` per component and a unique `metadata.timestamp` /
+  `serialNumber` on every run, the check must normalize those fields (e.g.
+  remap `bom-ref` to `name@version`, strip `metadata`/`serialNumber`) before
+  comparing — otherwise every run will report drift even with no dependency
+  changes. See `meal-planner-core`'s `tools/check_sbom.py` for a reference
+  implementation.
 
 ## CI integration checklist
 
@@ -53,7 +62,8 @@ When touching CI config, confirm it includes:
 - [ ] Lockfile/hash verification step
 - [ ] `pip-audit` step (fails build on high/critical)
 - [ ] Build fails if `--require-hashes` install fails
-- [ ] SBOM regeneration step (or a reminder if it's manual)
+- [ ] SBOM freshness check (regenerate and diff against the committed SBOM,
+      normalizing volatile fields) — fails the build if out of date
 
 ## Scope
 
