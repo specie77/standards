@@ -164,6 +164,8 @@ Floating tags (`@v4`, `@main`) are mutable and expose the pipeline to supply-cha
 
 ## Dependency CVE Auditing
 
+@docs/supply-chain.md
+
 Every CI pipeline must include a `pip-audit` step that runs after dependency installation and before tests. Pin the pip-audit version itself:
 
 ```yaml
