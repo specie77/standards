@@ -212,6 +212,26 @@ Prompt injection is the AI-era equivalent of SQL injection: untrusted content em
 
 6. **Log and alert on anomalous completions** (e.g. unexpected tool calls, completions that reference system-prompt contents, refusals that reference injected instructions). This is your intrusion-detection layer.
 
+### 3.6 LLM Output → Action Pipeline
+
+When an agent takes real-world actions (orders, writes, messages) based on an LLM decision, the completion is an untrusted input that drives a side effect. Required pipeline:
+
+1. **Static system prompt.** The system prompt contains no dynamic data — ever. All per-request data (market data, candidate lists, position context) goes in the user message.
+
+2. **JSON-encode all dynamic data into the user message.** Use `json.dumps()` on the structured payload — never raw f-string interpolation of externally-sourced text. JSON encoding neutralises delimiter and markup tricks and makes the trust boundary explicit.
+
+   ```python
+   user_msg = f"Evaluate this candidate:\n{json.dumps(ticker_context)}"
+   ```
+
+3. **Parse completions against a fixed schema** (pydantic model or JSON-schema structured output). Only validated fields flow downstream — never act on free-text parsing of the completion.
+
+4. **Fail safe on validation failure.** If the completion does not validate, return a default no-op decision (e.g. `PASS` / `HOLD`). Never execute on a partially-parsed response, and never retry-until-it-parses without a cap.
+
+5. **Business/risk rules run after the LLM decision and before any side effect or human-visible proposal.** The LLM must never be the last gate. Sequence: LLM decision → schema validation → deterministic risk check → (human approval if applicable) → execution. A blocked decision is recorded, not silently dropped.
+
+6. **Audit every decision.** Persist a decision ID with its outcome (proposed / blocked / approved / executed) so the chain from completion to side effect can be reconstructed.
+
 ---
 
 ## 4. Output Encoding
@@ -257,6 +277,18 @@ def verify_webhook_sig(payload: bytes, header_sig: str, secret: str) -> bool:
   - Telegram/Slack/Discord bot messages (verify `from_user.id` or team ID against an allowlist)
 - Reject messages where identity cannot be verified. Log the attempt.
 
+### 6.1 Chat-Bot Command Security (Telegram / Slack / Discord)
+
+Bots that accept commands and inline-button callbacks are a privileged remote interface. Required controls:
+
+- **Authorize every handler — commands and callbacks.** Check the sender ID against the configured allowlist at the top of every command handler *and* every callback handler. Guard against `from_user is None` before dereferencing. There is no such thing as a "harmless" read-only command exempt from the check.
+- **Reject unauthorized senders silently** (no reply that confirms the bot exists or what it accepts), but log the attempt with the sender ID.
+- **Validate callback data structure before routing.** Callback payloads are attacker-suppliable. Enforce an exact format (e.g. `prefix:kind:action:id` — exactly N parts) and reject anything else.
+- **Approval-token pattern for any approve/decline flow.** Key each pending action by a server-generated ID held in an in-memory dict. On callback: `get()` the entry, execute, then `pop()` it. A second click (double-tap) or a stale message replayed after restart finds no entry and is rejected. Never encode action parameters (qty, price, symbol) in the callback data itself — look them up server-side by ID.
+- **Whitelist-validate all command arguments** with a regex (e.g. ticker: `^[A-Z][A-Z0-9.]{0,5}$`) and parse numerics to typed values with range checks before use.
+- **Error replies carry the exception type only** (`type(e).__name__`); the full traceback goes to the log, never to the chat.
+- **If sending with a `parse_mode`** (Markdown/HTML), escape or strip markup control characters in any LLM- or user-sourced text before interpolating it into the message — otherwise crafted text can break formatting or smuggle links.
+
 ---
 
 ## 7. Logging & Audit
@@ -271,6 +303,27 @@ def verify_webhook_sig(payload: bytes, header_sig: str, secret: str) -> bool:
   - Source (IP, user ID, agent name)
   - What was rejected and why (safe description — not the raw bad input)
 - Audit logs (who did what, when) must be append-only. Use atomic writes (`os.replace()`) and never truncate audit logs programmatically.
+
+### Secret scrubbing on error paths
+
+Exception messages from HTTP clients routinely echo URLs and headers — which can contain bot tokens, `Authorization` headers, and API keys. Any error path that logs third-party exception text must pass it through a regex redaction filter first:
+
+```python
+import re
+
+_SECRET_PATTERNS = [
+    (re.compile(r'\b\d{6,}:[A-Za-z0-9_\-]{30,}\b'), '[BOT_TOKEN]'),          # Telegram bot token
+    (re.compile(r'(?i)(authorization|bearer)\s*[:=]\s*\S+'), r'\1: [REDACTED]'),
+    (re.compile(r'(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*\S+'), r'\1=[REDACTED]'),
+]
+
+def scrub_secrets(text: str) -> str:
+    for pattern, repl in _SECRET_PATTERNS:
+        text = pattern.sub(repl, text)
+    return text
+```
+
+Apply it at the logging call site for failed sends / failed API calls (`logger.error(scrub_secrets(str(e)))`). Scrubbing is defence-in-depth on top of — not a substitute for — never putting secrets in URLs or log statements in the first place.
 
 ---
 
@@ -287,8 +340,55 @@ Before declaring an agent production-ready:
 - [ ] Outbound URLs validated (scheme + IP range) if user-influenced
 - [ ] Prompt injection mitigations in place if agent calls an LLM
 - [ ] LLM outputs validated before acting on them
+- [ ] LLM decisions fail safe to a no-op default on schema-validation failure (§3.6)
+- [ ] Deterministic risk/business rules run between LLM decision and execution (§3.6)
+- [ ] Approval-token pattern used for any human-approval flow (§6.1)
 - [ ] HMAC or equivalent used for all inbound webhooks
 - [ ] Sender identity verified for all inter-agent messages
 - [ ] No secrets or raw user data in log output
+- [ ] Secret-scrub filter applied on error-logging paths (§7)
+- [ ] Container hardening checklist passed (§9)
+- [ ] CI runs `pip-audit` against this agent's own requirements file (§10)
 - [ ] Dependabot entries added for any new `requirements.txt` or `Dockerfile`
 - [ ] `pip-audit` passes with no known CVEs
+
+---
+
+## 9. Container & Compose Hardening Checklist
+
+For every agent that ships as a Docker service:
+
+- [ ] Base image pinned by digest, not just tag: `FROM python:3.14.5-slim@sha256:...` (see `docs/supply-chain.md`)
+- [ ] Base image is a **stable** release — never a beta/RC tag in production
+- [ ] Container runs as a non-root app user: create the user in the Dockerfile and drop privileges (`USER appuser`, or `gosu appuser` in the entrypoint after `chown`)
+- [ ] `security_opt: ["no-new-privileges:true"]` set in the compose service
+- [ ] Memory limit set (`mem_limit` / deploy resources); no `privileged: true`, no unneeded `cap_add`
+- [ ] No published ports unless the agent actually serves traffic; services on an isolated bridge network, outbound-only
+- [ ] `restart: unless-stopped` (or equivalent) so a crash doesn't silently end the capability
+- [ ] Healthcheck verifies real liveness (e.g. data-freshness probe against the agent's DB/heartbeat), not merely that the process exists
+- [ ] `COPY` is scoped to the files the image needs — never `COPY . .` (avoids leaking `.env`, `.git`, tests into the image)
+- [ ] `pip install --no-cache-dir --require-hashes -r requirements.txt` (hash-locked installs; see `docs/supply-chain.md`)
+- [ ] Secrets enter only via `env_file` / environment — never baked into the image
+
+---
+
+## 10. CI Pipeline Security Checklist
+
+For every CI workflow (complements the supply-chain checklist in `docs/supply-chain.md`):
+
+- [ ] `pip-audit` runs against **every** requirements file in the repo — each agent's `requirements.txt` plus `requirements-dev.txt` — not just the dev file. A loop keeps it complete as agents are added:
+
+  ```yaml
+  - name: Dependency CVE scan (pip-audit)
+    run: |
+      for req in requirements-dev.txt */requirements.txt; do
+        pip-audit -r "$req"
+      done
+  ```
+
+- [ ] Every third-party action pinned to a full commit SHA with the version as a comment
+- [ ] Explicit least-privilege `permissions:` block on every job (e.g. `contents: read`; add `packages: write` only on the job that pushes images)
+- [ ] `pull_request_target` avoided except where required (e.g. Dependabot metadata flows), and never combined with a checkout of the PR head running untrusted code
+- [ ] Builds install with `--require-hashes` and fail if hash verification fails
+- [ ] SBOM (CycloneDX/SPDX) regenerated when the lockfile changes — see `docs/supply-chain.md`
+- [ ] No repository secrets exposed to jobs that build or test untrusted PR code
