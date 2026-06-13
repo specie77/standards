@@ -33,6 +33,21 @@ Official, well-maintained packages only (e.g. PyPI verified). No experimental, u
 
 All credentials via environment variables. Never hardcode tokens, keys, or IDs. `.env` is never committed.
 
+**Inspecting environment variables in running containers**: never dump the full
+environment (`docker compose exec <svc> env`, `printenv`, etc.) — this prints
+secret values into the conversation transcript, which persists in Claude Code's
+local session history. To check whether a variable is set, check presence/
+emptiness without printing the value, e.g.:
+
+```bash
+docker compose exec <svc> python -c "import os; print(bool(os.environ.get('SOME_VAR')))"
+```
+
+If a specific non-secret value is needed (e.g. `MCP_PORT`), grep for that single
+key by name rather than dumping everything. The same applies to reading
+container logs that may echo secrets (tokens in HTTP request URLs, etc.) —
+redact or avoid printing the secret-bearing portion.
+
 ## Secure Coding
 
 Full patterns and checklists are in `docs/security-protocols.md`. The rules below are the active constraints Claude enforces on every code change.
