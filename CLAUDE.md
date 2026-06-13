@@ -177,14 +177,18 @@ This catches known CVEs before they reach production. Also run `pip audit` local
 
 ## Docker Builds in CI
 
-If the repo contains a `Dockerfile`, the CI pipeline must build it to validate image integrity on every PR:
+If the repo contains a `Dockerfile`, CI must validate that it builds.
+
+**Pull requests**: run a fast, native-arch, no-push build to catch Dockerfile/dependency breakage early:
 
 ```yaml
-- name: Build image
+- name: Build image (validation only)
   run: docker build -t app:${{ github.sha }} .
 ```
 
-For production images, push to the container registry after tests pass. For multi-arch deployments (e.g., ARM64), use `docker/setup-qemu-action` and `docker/build-push-action` with `platforms: linux/amd64,linux/arm64`.
+**Merge to `main`**: build and push the production image(s) to the registry. For multi-arch deployments (e.g. ARM64 for Orange Pi), use `docker/setup-qemu-action` and `docker/build-push-action` with the target `platforms`.
+
+**Solo-developer / single-consumer projects**: do not run the registry build-and-push job on PR branches. It duplicates the main-branch build (often QEMU-emulated and multi-minute) on every merge, and branch-tagged images (`:<branch-name>`) have no consumer. Gate the push job with `if: github.event_name == 'push'` (or split PR validation and main build/push into separate jobs) to conserve the Actions minute budget.
 
 ## New Agent Checklist
 When adding a new agent directory (e.g. `foo-trader/`) that contains a
