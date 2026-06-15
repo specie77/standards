@@ -52,8 +52,8 @@ Before adding any new package:
   `serialNumber` on every run, the check must normalize those fields (e.g.
   remap `bom-ref` to `name@version`, strip `metadata`/`serialNumber`) before
   comparing — otherwise every run will report drift even with no dependency
-  changes. See `meal-planner-core`'s `tools/check_sbom.py` for a reference
-  implementation.
+  changes. See `voice-meal-planner-core`'s `packages/mcp/tools/check_sbom.py`
+  (or `packages/comms/tools/check_sbom.py`) for a reference implementation.
 
 ## CI integration checklist
 
