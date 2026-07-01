@@ -205,6 +205,38 @@ If the repo contains a `Dockerfile`, CI must validate that it builds.
 
 **Solo-developer / single-consumer projects**: do not run the registry build-and-push job on PR branches. It duplicates the main-branch build (often QEMU-emulated and multi-minute) on every merge, and branch-tagged images (`:<branch-name>`) have no consumer. Gate the push job with `if: github.event_name == 'push'` (or split PR validation and main build/push into separate jobs) to conserve the Actions minute budget.
 
+## CI Minute Budget — Gate Everything on Changed Paths
+
+GitHub Actions minutes are a shared, finite budget across all of a developer's repos (e.g. the free tier's 2,000 min/month). Docker builds — especially QEMU-emulated multi-arch pushes — are the most expensive line item and the first place to cut. **Default every new CI pipeline to path-filtered, change-gated jobs; do not build on every push.**
+
+**Required pattern for any repo with more than one buildable/testable unit** (a monorepo of packages, or a single package plus a Docker image): add a `changes` job using `dorny/paths-filter` as the first job, and gate every downstream test/build/push job on its output. Tests can stay cheap and broad (`if: needs.changes.outputs.<pkg> == 'true'`); builds and pushes are the ones that must never run unconditionally.
+
+```yaml
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      app: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@<pinned-sha>
+      - uses: dorny/paths-filter@<pinned-sha>
+        id: filter
+        with:
+          filters: |
+            app:
+              - 'src/**'
+              - 'Dockerfile'
+
+  build-push:
+    needs: changes
+    if: needs.changes.outputs.app == 'true' && github.event_name == 'push'
+    # ...
+```
+
+**The shared-dependency gotcha:** if a Dockerfile does `COPY` on a path outside its own package directory (a shared/core library, a common `lib/`, a vendored submodule), that copied content is baked into the image — so the build/push job's `if:` condition must also include that shared path's filter output, not just the package's own directory. A monorepo with `packages/core` consumed by `packages/api` and `packages/worker` needs each image's build-push gate to be `needs.changes.outputs.api == 'true' || needs.changes.outputs.core == 'true'` (and likewise for `worker`) — gating on `api` alone means a core-only change silently ships a stale image, passing CI with no rebuild. Trace every `COPY`/`ADD` line in each Dockerfile back to its filter path before finalizing the gate condition.
+
+**When adding this pattern to an existing pipeline**, audit for the same gap: list every Dockerfile's `COPY`/`ADD` sources, cross-reference against the paths-filter definitions, and add any missing filter output to that image's build/push `if:` condition.
+
 ## New Agent Checklist
 When adding a new agent directory (e.g. `foo-trader/`) that contains a
 `requirements.txt` or `Dockerfile`, you MUST add corresponding Dependabot
