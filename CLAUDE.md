@@ -86,6 +86,14 @@ Prompt injection is the AI-era equivalent of SQL injection: untrusted content in
 - Validate LLM outputs before acting on them. A model completion is untrusted input — apply the same schema/regex validation used for any external source.
 - Grant agents only the tool permissions required for their stated purpose. Minimal privilege limits the blast radius of a successful injection.
 
+## Claude API — Explicit `thinking` Configuration
+
+Never omit the `thinking` parameter on a Claude API call and rely on the model's default — the default is not stable across model versions (e.g. `claude-sonnet-4-6` defaulted to thinking-off when omitted; `claude-sonnet-5` defaults to adaptive thinking when omitted). An omitted parameter that silently changes behavior on a model upgrade is exactly the kind of drift these standards exist to prevent.
+
+**Set `thinking={"type": "disabled"}` explicitly by default.** Only enable it (`{"type": "adaptive"}`, or the model's supported equivalent) when the call actually benefits from extended reasoning — open-ended analysis, multi-step planning, ambiguous input. A call that forces a single tool result via `tool_choice`, does structured extraction, or sits on a latency-sensitive user-facing path almost never needs it.
+
+Before enabling thinking on a given call site, confirm with the developer that reasoning is actually needed there — don't enable it speculatively "for better results." Extra reasoning adds latency and token cost, and — per the model's own migration notes — a `thinking`-omitted call can silently switch behavior on the next model upgrade in either direction. Explicit configuration makes intent durable across model migrations instead of inheriting whatever a new model's default happens to be.
+
 ## Agent Interface Documentation
 
 Every agent directory must contain an `AGENT.md` declaring its complete interface. See `docs/security-protocols.md` §1 for the full template.
