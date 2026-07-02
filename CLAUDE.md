@@ -175,6 +175,8 @@ Weekly schedule. Each project chooses its own day. Use `open-pull-requests-limit
 
 Before merging a Dependabot PR, confirm CI passes. If a bump fails due to an incompatible transitive dependency (e.g., `redis>=7` vs `celery<6`), close the PR with a comment explaining the blocker rather than leaving it stale.
 
+**Secrets-dependent steps fail on Dependabot PRs by default.** GitHub withholds repository secrets from workflows triggered by Dependabot's `pull_request` event (a supply-chain safeguard, so a malicious dependency bump can't exfiltrate them). Any CI step that needs a secret — a registry login for an image CVE scan, a paid API key, a deploy credential — will fail on every Dependabot PR with an auth error, regardless of the bump's content. Guard those specific steps with `if: github.actor != 'dependabot[bot]'` rather than gating the whole job; keep the secret-free parts (e.g. `docker build` itself) running so the bump still gets real validation.
+
 ## GitHub Actions Pinning
 
 Pin every third-party action to a full commit SHA, not a floating tag. Add the version as a comment:
