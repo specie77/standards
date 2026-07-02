@@ -198,6 +198,18 @@ Every CI pipeline must include a `pip-audit` step that runs after dependency ins
 
 This catches known CVEs before they reach production. Also run `pip audit` locally before merging any dependency-related PR.
 
+## CI Concurrency (Cancel Superseded Runs)
+
+Add a `concurrency` block to every workflow so that rapid successive pushes/merges don't each burn a full CI run to completion:
+
+```yaml
+concurrency:
+  group: ci-build-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+Default `cancel-in-progress: true` for **all** refs, including `main`. If several PRs merge within seconds of each other, only the latest run per ref completes — earlier in-progress runs are cancelled rather than queuing and consuming minutes. Only set `cancel-in-progress: false` (or restrict it to non-default branches) if the workflow performs an automated deploy where a mid-run cancellation could leave a partial/inconsistent deployment — a project that deploys manually (or not at all) through CI has no reason to protect main-branch runs from cancellation.
+
 ## Docker Builds in CI
 
 If the repo contains a `Dockerfile`, CI must validate that it builds.
