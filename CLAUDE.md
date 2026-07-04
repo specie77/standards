@@ -200,6 +200,15 @@ Every CI pipeline must include a `pip-audit` step that runs after dependency ins
 
 This catches known CVEs before they reach production. Also run `pip audit` locally before merging any dependency-related PR.
 
+## Static Analysis & Secrets Scanning
+
+`pip-audit` only catches known CVEs in dependencies — it does not catch vulnerabilities in your own code, or a credential accidentally committed. Every CI pipeline must also include:
+
+- **SAST**: `bandit -r <package_dir> -ll` against every package's source directory, pinned version, after dependency install and before tests.
+- **Secrets scanning**: `gitleaks detect` against the full git history (not just the working tree) on every push/PR.
+
+Both fail the build on findings. See `docs/security-protocols.md` §11 for CI YAML and triage guidance (fix or a scoped `# nosec` justification — never a blanket rule disable).
+
 ## CI Concurrency (Cancel Superseded Runs)
 
 Add a `concurrency` block to every workflow so that rapid successive pushes/merges don't each burn a full CI run to completion:
@@ -268,4 +277,13 @@ entries to `.github/dependabot.yml` in the consuming repo:
 - `package-ecosystem: docker` with `directory: /foo-trader` (if a Dockerfile exists)
 
 Missing entries mean dependency updates will not be tracked for that agent.
+
+## Self-Hosted / Home-Network Deployment Security
+
+For any project running on hardware you own and administer (home server, NAS, Orange Pi/Raspberry Pi, etc.) rather than a managed cloud platform:
+
+- **Host & network hardening** — SSH key-only auth, automatic OS security updates, default-deny host firewall, and (where the router supports it) network segmentation between the exposed box and personal devices. Full checklist: `docs/security-protocols.md` §12.
+- **Cloudflare Tunnel exposure** — if a service is exposed via `cloudflared`, **Cloudflare Access (Zero Trust) is required** as a policy on that hostname, in addition to any application-level auth — defense-in-depth so an app-auth bug still fails closed at the edge. Also enable WAF managed rules and edge rate limiting. Full checklist + periodic external scan cadence: `docs/security-protocols.md` §13.
+- **Browser/PWA-facing auth** — never gate backend access behind a secret embedded in client-side code; it is extractable by definition. Prefer passing through Cloudflare Access's signed JWT rather than issuing a bespoke token from a client-supplied static secret. Any HTML/JS-serving response sets `Content-Security-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options`, `Referrer-Policy`. Full guidance: `docs/security-protocols.md` §14.
+- **Secret rotation cadence** — Cloudflare tunnel tokens every 90 days; OAuth client secrets, LLM/API keys, and internal shared secrets every 180 days; anything suspected exposed, immediately. Record last-rotated dates in the project's `docs/security-cadence.md`. Full table: `docs/security-protocols.md` §5.1.
 

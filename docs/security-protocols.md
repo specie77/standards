@@ -255,8 +255,22 @@ Sanitise output at the point it crosses a trust boundary, not at the point it wa
 - All credentials (API keys, tokens, passwords, HMAC secrets) come from environment variables or a secrets manager. Never hardcode.
 - `.env` files are never committed. Add `.env` to `.gitignore` in every repo.
 - Secrets are never logged, never included in error messages returned to callers, and never interpolated into URLs stored in logs.
-- Rotate secrets at a known schedule; store rotation dates in your runbook.
+- Rotate secrets at a known schedule; store rotation dates in your runbook (e.g. each project's `docs/security-cadence.md`).
 - For HMAC-based webhook verification, use `hmac.compare_digest()` — never `==` — to avoid timing attacks.
+
+### 5.1 Rotation cadence
+
+Default schedule unless a provider mandates tighter rotation:
+
+| Secret type | Cadence | Notes |
+|---|---|---|
+| Cloud tunnel tokens (e.g. Cloudflare Tunnel) | 90 days | Binds a public hostname directly to your network; highest blast radius of any secret in a self-hosted stack. |
+| OAuth client secrets (GitHub, Google, etc.) | 180 days | Rotate immediately if any collaborator with repo access leaves or is suspected compromised. |
+| LLM / third-party API keys (Anthropic, Deepgram, etc.) | 180 days | Rotate immediately on suspected leakage (e.g. accidental commit, even if later removed from history). |
+| Internal shared secrets (Redis AUTH, service-to-service tokens) | 180 days | Coordinate rotation across all consumers before invalidating the old value. |
+| Any secret after a suspected exposure (log leak, screen-share, committed then force-pushed out) | Immediately | Treat "removed from history" as "still compromised" — assume it was scraped before removal. |
+
+Record the last-rotated date for each secret in the project's security doc (not in `.env` itself). A rotation schedule with no record of when it last happened is not a schedule.
 
 ```python
 import hmac, hashlib
@@ -349,8 +363,11 @@ Before declaring an agent production-ready:
 - [ ] Secret-scrub filter applied on error-logging paths (§7)
 - [ ] Container hardening checklist passed (§9)
 - [ ] CI runs `pip-audit` against this agent's own requirements file (§10)
+- [ ] CI runs SAST (`bandit`) and secrets scanning (`gitleaks`) against this agent's code (§11)
 - [ ] Dependabot entries added for any new `requirements.txt` or `Dockerfile`
 - [ ] `pip-audit` passes with no known CVEs
+- [ ] If this agent is reachable from outside localhost (self-hosted, tunnel-exposed, or LAN-exposed): host & network hardening checklist passed (§12), and — if exposed via Cloudflare Tunnel — §13's tunnel-exposure checklist passed
+- [ ] If this agent serves a browser-facing UI or issues its own auth tokens: §14's web-auth checklist passed
 
 ---
 
@@ -392,3 +409,129 @@ For every CI workflow (complements the supply-chain checklist in `docs/supply-ch
 - [ ] Builds install with `--require-hashes` and fail if hash verification fails
 - [ ] SBOM (CycloneDX/SPDX) regenerated when the lockfile changes — see `docs/supply-chain.md`
 - [ ] No repository secrets exposed to jobs that build or test untrusted PR code
+- [ ] `bandit` (SAST) runs against every package's source directory and fails the build on medium/high findings (§11)
+- [ ] `gitleaks` runs against the full git history on every push/PR and fails the build on any detected secret (§11)
+
+---
+
+## 11. Static Analysis (SAST) & Secrets Scanning
+
+`pip-audit` (§10, `docs/supply-chain.md`) only catches known CVEs in *dependencies*. It does not catch a vulnerability introduced in **your own code** — an f-string that slips into a SQL query, a new `subprocess.run(..., shell=True)`, a hardcoded credential. SAST and secrets-scanning close that gap and are required in every repo's CI, not just this project's.
+
+### 11.1 SAST — `bandit`
+
+- Run `bandit -r <package_dir> -ll` (`-ll` = report medium/high severity only, to avoid low-severity noise drowning out real findings) as a required CI step, after dependency install and before tests.
+- Pin the version: `pip install bandit==<version>`.
+- A monorepo runs it once per package directory (same pattern as the `pip-audit` loop in §10), not once against the whole tree — keeps findings attributable to the right package's CI job.
+- Triage every finding: fix it, or add a scoped `# nosec B### — <reason>` comment justifying why it's a false positive in this context. Never blanket-disable a rule repo-wide to silence noise.
+
+```yaml
+- name: SAST (bandit)
+  run: |
+    pip install bandit==1.8.0
+    bandit -r packages/core/services packages/core/models packages/mcp/mcp_server packages/comms/bot packages/comms/tasks -ll
+```
+
+### 11.2 Secrets scanning — `gitleaks`
+
+- Run `gitleaks detect` against the **full git history**, not just the working tree — a secret committed and later removed in a subsequent commit is still exposed to anyone who clones the repo.
+- Run on every push and PR; fail the build on any finding.
+- Also run once, locally, against each existing repo's full history when this control is first adopted (a backfill check) — a clean CI run going forward does not prove the history is clean.
+
+```yaml
+- name: Secrets scan (gitleaks)
+  uses: gitleaks/gitleaks-action@<pinned-sha>  # pin per repo's GitHub Actions Pinning rule
+  env:
+    GITLEAKS_LICENSE: ""  # not required for the OSS CLI use case
+```
+
+If a real secret is ever found in history: rotate it immediately (§5.1) — a `git filter-repo`/force-push history rewrite reduces future exposure but does not un-expose a secret that may already have been scraped.
+
+---
+
+## 12. Host & Network Hardening (Self-Hosted Deployments)
+
+Applies to any project where a service runs on hardware you own and administer directly (a home server, NAS, Raspberry Pi / Orange Pi, etc.) rather than a managed cloud platform. Container-level hardening (§9) is necessary but not sufficient — a compromised or misconfigured host underneath a well-hardened container still exposes the whole box.
+
+### 12.1 SSH
+
+- [ ] Key-only authentication; password authentication disabled (`PasswordAuthentication no` in `sshd_config`)
+- [ ] Root login disabled (`PermitRootLogin no`)
+- [ ] `fail2ban` (or equivalent) installed and jailing repeated auth failures
+- [ ] SSH not reachable from the public internet — LAN-only, or behind a VPN/Cloudflare Access for remote administration. Never port-forward 22 directly to a home router.
+
+### 12.2 OS patching
+
+- [ ] Automatic security updates enabled (`unattended-upgrades` on Debian/Ubuntu-family hosts, or the platform's equivalent) so known-CVE kernel/package fixes land without manual intervention
+- [ ] A monthly manual check confirms unattended-upgrades actually ran (silent failure of the updater is a common real-world gap)
+
+### 12.3 Host firewall
+
+- [ ] Default-deny inbound (`ufw`/`nftables`/`iptables`); explicitly allow only the ports actually needed (SSH from LAN, any genuinely LAN-facing admin UI)
+- [ ] No container port is published to `0.0.0.0` unless that specific service is meant to be reachable from the LAN or internet (cross-reference against §9's "no published ports unless serving traffic" rule — this is the same principle at the host firewall layer as a second, independent enforcement point)
+- [ ] Outbound is unrestricted unless you have a specific reason to egress-filter (most home setups don't need this)
+
+### 12.4 Network segmentation
+
+- [ ] If your router/switch supports VLANs, place the self-hosted box on a segment separate from personal devices (phones, laptops) that hold unrelated sensitive data — a compromise of the exposed box then can't pivot to the rest of the home network
+- [ ] Disable any router-level remote-management feature (UPnP automatic port-forwarding, cloud remote-admin) you aren't deliberately using — these are common unmonitored exposure paths independent of anything this project controls
+- [ ] Confirm no *other* service on the same host publishes a port you didn't intend (`docker ps`, `ss -tlnp` — audit periodically, not just at initial setup)
+
+### 12.5 Monitoring
+
+- [ ] Host auth logs (`journalctl -u ssh`, `fail2ban.log`) reviewed on the same cadence as the project's `AuditEvent` spot-check (see each project's `docs/security-cadence.md`)
+- [ ] Disk space and container resource limits (§9) alerted on, not just capped — a silently full disk is an availability failure with the same user-facing impact as a compromise
+
+---
+
+## 13. Public Exposure via Cloudflare Tunnel
+
+A pattern used across projects that expose a self-hosted service to the internet without port-forwarding: `cloudflared` makes an outbound-only connection, so no inbound port is opened on the home router. This is a strong first layer, but the tunnel itself is not an auth boundary — anything reachable at the tunnel's public hostname is reachable by anyone who finds that hostname unless something in front of the app enforces auth.
+
+Required controls for every Cloudflare-Tunnel-exposed hostname:
+
+- [ ] **Cloudflare Access (Zero Trust)** configured as a policy on the hostname, in addition to (not instead of) any application-level auth. This is defense-in-depth: a bug in the app's own auth/allowlist logic still fails closed at the edge, before the request ever reaches your network. Free for personal use up to 50 users.
+- [ ] Cloudflare **WAF managed rules** enabled on the zone
+- [ ] Edge **rate limiting** configured on the hostname (independent of any application-level rate limit — protects against volumetric abuse before it reaches your box at all)
+- [ ] Tunnel token treated as a secret per §5/§5.1 — anyone with the token can bind a hostname into your tunnel
+- [ ] One tunnel service definition per exposed app where practical, rather than routing multiple internal services through a single shared hostname/path — limits what a single compromised credential or misrouted request can reach
+
+### 13.1 Periodic external validation (lightweight DAST)
+
+CI-integrated DAST against a live production endpoint is usually the wrong tool (it would be scanning your real, possibly stateful, production service on every push). Instead:
+
+- [ ] Run a baseline scan (e.g. **OWASP ZAP baseline mode** or **Nuclei** with the community template set) against the public tunnel hostname on a recurring manual cadence — quarterly, or after any change to the exposed app's auth/routing — not as a CI gate.
+- [ ] Record findings and remediation in the project's `docs/security-cadence.md`, same as the OWASP LLM Top 10 pass table.
+
+---
+
+## 14. Browser/PWA-Facing Auth & Web Security Headers
+
+Applies once a project serves an HTML/JS frontend (a PWA, a dashboard) rather than only a bot/API backend. This is new attack surface with rules distinct from §6's chat-bot guidance.
+
+### 14.1 Anti-pattern: secrets embedded in client-side code
+
+**Do not gate backend write access behind a secret whose only protection is that it's "in client-side code, not published."** Anything shipped to a browser (JS bundle, PWA asset, even a "hidden" config file fetched by the client) is extractable by definition — it runs on a device outside your control. A static secret embedded this way is equivalent in a threat model to no secret at all; a pentest will flag it as broken authentication regardless of how unlikely the discovery is judged to be in practice.
+
+**Preferred pattern — Cloudflare Access passthrough:** If the frontend's hostname already sits behind Cloudflare Access (§13), let Access perform the actual authentication (e.g. one-time PIN to a personal email, or an identity-provider login) and pass its signed JWT (`Cf-Access-Jwt-Assertion` header) through to the backend. The backend verifies that JWT server-side against Cloudflare's public JWKS for the account's team domain. No static secret is ever shipped to the client, no bespoke token-issuance endpoint is needed, and the same auth layer already required for the hostname (§13) does double duty.
+
+**If a bespoke token-issuance endpoint is unavoidable** (e.g. no Cloudflare Access available for that hostname): the issuing endpoint itself must require a real credential exchange (not a static shared secret) — at minimum, treat it as its own auth boundary with the same rigor as §6, and:
+
+- [ ] Issued tokens are short-lived (≤ 1 hour; re-issue rather than extending a long-lived token)
+- [ ] Signed with a server-held secret — random, ≥ 256-bit, from an env var, never derived from anything client-visible
+- [ ] Include `iss`/`aud`/`exp` claims and verify all three on every request
+- [ ] Revocable — a version/generation claim checked against a current value the server can bump, since JWTs otherwise can't be invalidated before expiry
+- [ ] The issuance endpoint itself is rate-limited and its failures logged (§7)
+
+### 14.2 Security headers
+
+Any response that serves HTML or is loaded directly by a browser must set:
+
+| Header | Value | Purpose |
+|---|---|---|
+| `Content-Security-Policy` | Restrictive default (`default-src 'self'`, explicit allowlist for any third-party script/connect targets, e.g. the STT/TTS provider's WebSocket origin) | Limits blast radius of any injected script |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Enforced HTTPS (Cloudflare terminates TLS, but set this at the origin too) |
+| `X-Content-Type-Options` | `nosniff` | Prevents MIME-sniffing attacks |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Avoids leaking full URLs (which may contain tokens) to third-party referrers |
+
+A JSON-only API backend (no HTML ever served) does not need `Content-Security-Policy`, but should still set `X-Content-Type-Options: nosniff`.
