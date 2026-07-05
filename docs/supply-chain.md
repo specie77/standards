@@ -55,6 +55,33 @@ Before adding any new package:
   changes. See `voice-meal-planner-core`'s `packages/mcp/tools/check_sbom.py`
   (or `packages/comms/tools/check_sbom.py`) for a reference implementation.
 
+## Dependabot and generated artifacts
+
+Dependabot edits `requirements.txt` (and its `--hash` entries) directly. It does
+**not** run `pip-compile` and does **not** regenerate the SBOM. In a hash-locked
+repo with an SBOM freshness check this means **every** Dependabot PR fails CI
+until the generated artifacts are refreshed — the version bump is correct, but
+the committed SBOM (and any transitively-affected hashes) are stale. Resolve it
+one of two ways:
+
+- **Manual**: before merging, re-resolve the lockfile with
+  `pip-compile --generate-hashes` and regenerate the SBOM, committing both.
+- **Automated**: add a workflow that regenerates the SBOM on patch/minor
+  Dependabot PRs and commits it back to the PR branch. Constraints:
+  - Keep it **SBOM-only**. `pip-audit` reads the already-pinned requirements and
+    runs no package build code, so it is safe in a privileged, PR-triggered job.
+    Do **not** auto-run `pip-compile --generate-hashes` there — resolving
+    dependencies executes the bumped (untrusted) package's build backend. If
+    lockfile recompilation must be automated, isolate it in a two-workflow
+    `pull_request` (unprivileged, uploads an artifact) → `workflow_run`
+    (privileged, commits the artifact as data only) split.
+  - Commit back with a **PAT or GitHub App token, never `GITHUB_TOKEN`** —
+    commits authored by `GITHUB_TOKEN` do not re-trigger workflows, so the
+    freshness check would never re-run green.
+
+Either way, do not auto-merge without a required CI status check gating the merge
+(see `CLAUDE.md`, Dependabot) — otherwise a stale SBOM lands on the default branch.
+
 ## CI integration checklist
 
 When touching CI config, confirm it includes:
@@ -64,6 +91,9 @@ When touching CI config, confirm it includes:
 - [ ] Build fails if `--require-hashes` install fails
 - [ ] SBOM freshness check (regenerate and diff against the committed SBOM,
       normalizing volatile fields) — fails the build if out of date
+- [ ] Dependabot PRs refresh generated artifacts (SBOM, and lockfile hashes if
+      transitively affected) — manually before merge, or via an SBOM-only
+      auto-regeneration workflow; auto-merge gated on a required CI check
 
 ## Scope
 
