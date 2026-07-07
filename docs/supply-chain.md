@@ -78,6 +78,14 @@ one of two ways:
   - Commit back with a **PAT or GitHub App token, never `GITHUB_TOKEN`** —
     commits authored by `GITHUB_TOKEN` do not re-trigger workflows, so the
     freshness check would never re-run green.
+  - **Name the secret with a repo/project identifier** (e.g.
+    `VOICE_MEAL_PLANNER_CORE_SBOM_REFRESH_PAT`, not `SBOM_REFRESH_PAT`) —
+    this pattern is meant to be reused across multiple projects, each with
+    its own equivalently-scoped PAT. A generic name invites collision or
+    ambiguity once more than one repo's secrets are being managed side by
+    side (e.g. copy-pasting a workflow between repos, or a developer
+    auditing PATs across their GitHub account). Apply the same convention
+    to any other repo-scoped automation secret, not just this one.
 
 Either way, do not auto-merge without a required CI status check gating the merge
 (see `CLAUDE.md`, Dependabot) — otherwise a stale SBOM lands on the default branch.
