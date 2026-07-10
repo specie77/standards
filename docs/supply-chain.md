@@ -75,9 +75,16 @@ one of two ways:
     lockfile recompilation must be automated, isolate it in a two-workflow
     `pull_request` (unprivileged, uploads an artifact) → `workflow_run`
     (privileged, commits the artifact as data only) split.
-  - Commit back with a **PAT or GitHub App token, never `GITHUB_TOKEN`** —
-    commits authored by `GITHUB_TOKEN` do not re-trigger workflows, so the
-    freshness check would never re-run green.
+  - Commit back with a **GitHub App token, never `GITHUB_TOKEN`** — commits
+    pushed with `GITHUB_TOKEN` do not re-trigger workflows, so the freshness
+    check would never re-run green and auto-merge would never fire. **A
+    fine-grained PAT was observed not to re-trigger CI either** (the pushed
+    commit received zero check-runs), so prefer a **GitHub App** installed on
+    just the one repo (Contents: write): its tokens are repo-scoped, auto-expire
+    in ~1h (nothing to rotate), and App-authenticated pushes reliably re-trigger.
+    Use `actions/create-github-app-token`; a classic `repo`-scoped PAT also
+    re-triggers but has a far broader blast radius (all your repos) — avoid it
+    when an App will do.
   - **Name the secret with a repo/project identifier** (e.g.
     `VOICE_MEAL_PLANNER_CORE_SBOM_REFRESH_PAT`, not `SBOM_REFRESH_PAT`) —
     this pattern is meant to be reused across multiple projects, each with
@@ -89,6 +96,56 @@ one of two ways:
 
 Either way, do not auto-merge without a required CI status check gating the merge
 (see `CLAUDE.md`, Dependabot) — otherwise a stale SBOM lands on the default branch.
+
+## Restrict Dependabot to direct dependencies on hash-locked lockfiles
+
+Dependabot edits a hash-locked lockfile **entry by entry** — it does not
+re-resolve the dependency graph. Its `pip-compile` re-resolution only engages
+when the lockfile is generated from a `requirements.in` source; a lockfile
+compiled straight from `pyproject.toml` (or by `uv`, which Dependabot does not
+support at all) gets plain entry-editing. Left unrestricted, Dependabot will
+bump a **transitive** package past a version its **pinned parent** allows and
+produce an **uninstallable** lockfile. Observed in practice: `pydantic-core`
+bumped to `2.47.0` while `pydantic 2.13.4` pins `pydantic-core==2.46.4` — every
+affected PR then failed at `pip install` (`ResolutionImpossible`), before any
+SBOM/test step. Grouped updates make this worse by bundling several such bumps.
+
+**Rule:** on any hash-locked pip project whose lockfile is compiled from
+`pyproject.toml`/`uv` (i.e. no `requirements.in` for Dependabot to recompile),
+restrict each pip update entry to direct dependencies:
+
+```yaml
+updates:
+  - package-ecosystem: pip
+    directory: /packages/foo
+    allow:
+      - dependency-type: "direct"
+```
+
+Direct-only keeps Dependabot's bumps internally consistent (it only touches
+manifest-declared deps and their resolvable subtree). The trade-off — transitive
+deps no longer get their own PRs — is covered two ways, so nothing is lost:
+
+- **Security**: `pip-audit` in CI fails the build on a transitive CVE; you fix it
+  with a lockfile recompile.
+- **Routine freshness**: periodically (e.g. monthly) recompile every package's
+  lockfile with `--upgrade` and regenerate the SBOM — one PR, one CI run — to
+  sweep up transitive bumps. This is the same batch recompile used to consolidate
+  a large Dependabot backlog into a single reviewable change.
+
+This does **not** apply to `docker` or `github-actions` ecosystems (no transitive
+lockfile to make inconsistent) — leave those unrestricted.
+
+### Consolidating a Dependabot backlog
+
+When many Dependabot PRs have piled up (or all fail a shared check like SBOM
+freshness), do **not** re-run/merge them individually — that burns one CI run per
+PR. Instead consolidate: on one branch, recompile each package's lockfile with
+`--upgrade` (in the CI-matching container/Python version), regenerate the SBOMs,
+apply any `github-actions`/`docker` bumps by hand, and open a single PR. One CI
+run clears the whole backlog, and — because a recompile re-resolves the graph —
+the result is internally consistent even where the individual Dependabot PRs were
+not. Close the superseded PRs with a pointer to the consolidated one.
 
 ## CI integration checklist
 
@@ -102,6 +159,9 @@ When touching CI config, confirm it includes:
 - [ ] Dependabot PRs refresh generated artifacts (SBOM, and lockfile hashes if
       transitively affected) — manually before merge, or via an SBOM-only
       auto-regeneration workflow; auto-merge gated on a required CI check
+- [ ] Hash-locked pip lockfiles compiled from `pyproject.toml`/`uv`: each pip
+      Dependabot entry restricted to `dependency-type: direct` (prevents
+      uninstallable transitive-vs-pinned-parent lockfiles)
 
 ## Scope
 
