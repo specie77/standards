@@ -93,6 +93,24 @@ one of two ways:
     side (e.g. copy-pasting a workflow between repos, or a developer
     auditing PATs across their GitHub account). Apply the same convention
     to any other repo-scoped automation secret, not just this one.
+  - **The auto-merge gate must allow the refresh bot's actor, not just
+    `dependabot[bot]`.** Once the refresh workflow pushes its fix commit, the CI
+    run it re-triggers has that bot as its actor — so the *green* run is authored
+    by the App/PAT identity, **not** `dependabot[bot]`. An auto-merge condition
+    gated on `workflow_run.actor.login == 'dependabot[bot]'` will skip that green
+    run and the PR never merges (observed: all checks green, auto-merge silently
+    skipped). Gate on the branch prefix (`startsWith(head_branch, 'dependabot/')`
+    — the real safety boundary, since only Dependabot opens those branches) and
+    allow **both** actors:
+
+    ```yaml
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/') &&
+      (github.event.workflow_run.actor.login == 'dependabot[bot]' ||
+       github.event.workflow_run.actor.login == '<refresh-app-slug>[bot]')
+    ```
 
 Either way, do not auto-merge without a required CI status check gating the merge
 (see `CLAUDE.md`, Dependabot) — otherwise a stale SBOM lands on the default branch.
