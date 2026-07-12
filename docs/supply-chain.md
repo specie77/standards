@@ -97,43 +97,57 @@ one of two ways:
 Either way, do not auto-merge without a required CI status check gating the merge
 (see `CLAUDE.md`, Dependabot) — otherwise a stale SBOM lands on the default branch.
 
-## Restrict Dependabot to direct dependencies on hash-locked lockfiles
+## Dependabot on hash-locked lockfiles: freeze exact-pinned pairs
 
 Dependabot edits a hash-locked lockfile **entry by entry** — it does not
 re-resolve the dependency graph. Its `pip-compile` re-resolution only engages
 when the lockfile is generated from a `requirements.in` source; a lockfile
 compiled straight from `pyproject.toml` (or by `uv`, which Dependabot does not
-support at all) gets plain entry-editing. Left unrestricted, Dependabot will
-bump a **transitive** package past a version its **pinned parent** allows and
-produce an **uninstallable** lockfile. Observed in practice: `pydantic-core`
-bumped to `2.47.0` while `pydantic 2.13.4` pins `pydantic-core==2.46.4` — every
-affected PR then failed at `pip install` (`ResolutionImpossible`), before any
-SBOM/test step. Grouped updates make this worse by bundling several such bumps.
+support at all) gets plain entry-editing. When a package **exact-pins** another
+(`foo` depends on `foo-core==<exact>`), Dependabot bumping either one of the pair
+alone produces an **uninstallable** lockfile. Observed in practice: `pydantic`
+exact-pins `pydantic-core==<version>`; Dependabot bumped `pydantic-core` to
+`2.47.0` while `pydantic 2.13.4` pins `==2.46.4`, and every affected PR failed at
+`pip install` (`ResolutionImpossible`) before any SBOM/test step. Grouped updates
+make it worse by bundling several such bumps.
 
-**Rule:** on any hash-locked pip project whose lockfile is compiled from
-`pyproject.toml`/`uv` (i.e. no `requirements.in` for Dependabot to recompile),
-restrict each pip update entry to direct dependencies:
+**`dependency-type: direct` does NOT fix this** — do not reach for it. A flat,
+fully-pinned lockfile (pip-compile/uv output) lists *every* package explicitly,
+so Dependabot classifies them all as "direct" and the filter is a no-op. This
+was confirmed empirically: after adding `allow: [{dependency-type: direct}]`,
+a clean `@dependabot recreate` against the live config still produced the broken
+`pydantic-core` bump. (The filter only distinguishes direct/transitive when the
+manifest lists only direct deps — e.g. a `requirements.in` with resolved
+transitives elsewhere — which a flat lockfile does not.)
+
+**What actually works:** `ignore` both members of each exact-pinned pair on
+every pip entry, so the pair moves **only** via a consistent recompile:
 
 ```yaml
 updates:
   - package-ecosystem: pip
     directory: /packages/foo
-    allow:
-      - dependency-type: "direct"
+    ignore:
+      - dependency-name: "pydantic"
+      - dependency-name: "pydantic-core"
 ```
 
-Direct-only keeps Dependabot's bumps internally consistent (it only touches
-manifest-declared deps and their resolvable subtree). The trade-off — transitive
-deps no longer get their own PRs — is covered two ways, so nothing is lost:
+Freeze **both** names, not just the one you saw break — the conflict occurs in
+either direction (the child bumped ahead of the parent, or the parent bumped
+ahead when it releases). `pydantic`/`pydantic-core` is the common offender;
+most packages use ranges and are fine. Add a new pair to the ignore list only
+when a grouped PR actually fails at `pip install` on a version conflict —
+don't pre-emptively freeze deps that use ranges. Everything else Dependabot may
+still bump and auto-merge. The frozen pair's freshness (and CVEs) are covered:
 
-- **Security**: `pip-audit` in CI fails the build on a transitive CVE; you fix it
-  with a lockfile recompile.
+- **Security**: `pip-audit` in CI fails the build on a CVE in *any* dependency,
+  including an ignored one; you fix it with a lockfile recompile.
 - **Routine freshness**: periodically (e.g. monthly) recompile every package's
-  lockfile with `--upgrade` and regenerate the SBOM — one PR, one CI run — to
-  sweep up transitive bumps. This is the same batch recompile used to consolidate
-  a large Dependabot backlog into a single reviewable change.
+  lockfile with `--upgrade` and regenerate the SBOM — one PR, one CI run — which
+  moves the frozen pair together consistently and sweeps up other transitives.
+  Same batch recompile used to consolidate a large Dependabot backlog.
 
-This does **not** apply to `docker` or `github-actions` ecosystems (no transitive
+This does **not** apply to `docker` or `github-actions` ecosystems (no
 lockfile to make inconsistent) — leave those unrestricted.
 
 ### Consolidating a Dependabot backlog
@@ -159,9 +173,10 @@ When touching CI config, confirm it includes:
 - [ ] Dependabot PRs refresh generated artifacts (SBOM, and lockfile hashes if
       transitively affected) — manually before merge, or via an SBOM-only
       auto-regeneration workflow; auto-merge gated on a required CI check
-- [ ] Hash-locked pip lockfiles compiled from `pyproject.toml`/`uv`: each pip
-      Dependabot entry restricted to `dependency-type: direct` (prevents
-      uninstallable transitive-vs-pinned-parent lockfiles)
+- [ ] Hash-locked pip lockfiles compiled from `pyproject.toml`/`uv`: any
+      exact-pinned dependency pair (e.g. `pydantic`/`pydantic-core`) is `ignore`d
+      on each pip Dependabot entry so it moves only via recompile (NOT
+      `dependency-type: direct`, which is a no-op on flat pinned lockfiles)
 
 ## Scope
 
