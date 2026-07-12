@@ -168,6 +168,50 @@ still bump and auto-merge. The frozen pair's freshness (and CVEs) are covered:
 This does **not** apply to `docker` or `github-actions` ecosystems (no
 lockfile to make inconsistent) — leave those unrestricted.
 
+### Automating the periodic-recompile reminder
+
+The "recompile monthly" step above is easy to forget once it's not gated by a
+failing check. Don't automate the recompile itself (re-resolving executes the
+bumped packages' build backends — the same supply-chain reason the SBOM-refresh
+workflow above is deliberately SBOM-only) — but a **reminder** carries no such
+risk, since it runs no package code at all. Add a small scheduled workflow that
+opens a labeled GitHub issue on a monthly cron, with a checklist body listing
+each package's recompile command and which exact-pinned pairs must move:
+
+```yaml
+name: Monthly recompile reminder
+on:
+  schedule:
+    - cron: "0 9 1 * *"      # 1st of the month
+  workflow_dispatch: {}
+permissions:
+  issues: write
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@<pinned-sha>
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+            --label recompile --state open --json number --jq 'length')
+          if [ "$existing" -gt 0 ]; then exit 0; fi
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --label recompile \
+            --title "Monthly lockfile recompile ($(date +%Y-%m))" \
+            --body-file .github/recompile-checklist.md
+```
+
+**Dedup on the label, not the date.** Check for an already-open issue with the
+marker label before creating a new one. This makes a skipped month self-healing
+(last month's issue is still open, so nothing new fires) instead of piling up
+duplicate reminders — the only required discipline is closing the issue after
+you actually recompile, which re-arms next month's check.
+
+The built-in `GITHUB_TOKEN` is sufficient (`issues: write` on a same-repo
+issue-create) — no App/PAT needed, unlike the SBOM-refresh push-back above.
+
 ### Consolidating a Dependabot backlog
 
 When many Dependabot PRs have piled up (or all fail a shared check like SBOM
@@ -195,6 +239,9 @@ When touching CI config, confirm it includes:
       exact-pinned dependency pair (e.g. `pydantic`/`pydantic-core`) is `ignore`d
       on each pip Dependabot entry so it moves only via recompile (NOT
       `dependency-type: direct`, which is a no-op on flat pinned lockfiles)
+- [ ] If any pair is frozen per the above, a scheduled reminder workflow opens
+      a labeled issue monthly prompting the recompile (dedup on an open label,
+      not the date) — the recompile itself stays manual/unautomated
 
 ## Scope
 
