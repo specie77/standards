@@ -185,6 +185,7 @@ on:
     - cron: "0 9 1 * *"      # 1st of the month
   workflow_dispatch: {}
 permissions:
+  contents: read   # needed for actions/checkout, even to read a local file
   issues: write
 jobs:
   remind:
@@ -211,6 +212,16 @@ you actually recompile, which re-arms next month's check.
 
 The built-in `GITHUB_TOKEN` is sufficient (`issues: write` on a same-repo
 issue-create) — no App/PAT needed, unlike the SBOM-refresh push-back above.
+
+**A `permissions:` block replaces the default token scopes, it doesn't add to
+them.** Listing only `issues: write` (because that's the only *action* the job
+takes) silently revokes the otherwise-implicit `contents: read`, and
+`actions/checkout` then fails with a confusing `remote: Repository not found`
+— indistinguishable at a glance from an actual auth/visibility problem.
+Observed in practice on this exact workflow. Any job with an explicit
+`permissions:` block that also runs `actions/checkout` needs `contents: read`
+listed alongside whatever scopes the job's real work requires, even when
+checkout is only there to read a local file (e.g. an issue-body template).
 
 ### Consolidating a Dependabot backlog
 
