@@ -47,13 +47,54 @@ Before adding any new package:
   lockfile update.
 - Add a CI step that regenerates the SBOM from the locked requirements and
   fails the build if it differs from the committed copy ("freshness check").
-  Since SBOM generators (e.g. `pip-audit --format=cyclonedx-json`) emit a
-  random `bom-ref` per component and a unique `metadata.timestamp` /
-  `serialNumber` on every run, the check must normalize those fields (e.g.
-  remap `bom-ref` to `name@version`, strip `metadata`/`serialNumber`) before
-  comparing — otherwise every run will report drift even with no dependency
-  changes. See `voice-meal-planner-core`'s `packages/mcp/tools/check_sbom.py`
-  (or `packages/comms/tools/check_sbom.py`) for a reference implementation.
+  **Use the canonical shared script, `tools/check_sbom.py` in this
+  standards repo, rather than copy-pasting an implementation per project** —
+  see "Shared tooling scripts" below for why and how. It already handles the
+  normalization this check needs:
+  - SBOM generators (e.g. `pip-audit --format=cyclonedx-json`) emit a random
+    `bom-ref` per component and a unique `metadata.timestamp` / `serialNumber`
+    on every run — remapped/stripped before comparing, or every run reports
+    drift with no real dependency change.
+  - `pip-audit`'s own resolution can also surface build-time packages (`pip`,
+    `setuptools`, `wheel`, ...) that a Docker base image bundles but that
+    aren't themselves pinned in the lockfile. Their bundled versions drift
+    over time independent of the project's actual dependencies, which would
+    otherwise fail the freshness check with zero real drift (observed:
+    `python:3.11-slim`'s bundled `setuptools` moved between two runs with no
+    lockfile change — specie77/standards#3). Fixed by restricting the
+    comparison to components whose *name* (not version — a genuine version
+    mismatch on an already-pinned package must still fail) appears as an
+    explicit `==` pin somewhere in the lockfile.
+
+## Shared tooling scripts
+
+`.standards` is vendored as a git submodule into every project (the same
+mechanism that shares `CLAUDE.md` via `@.standards/CLAUDE.md`). Any script
+whose *logic*, not just its guidance, should be identical across projects
+belongs in `tools/` in this repo — invoked directly from the submodule path,
+not copied into each project.
+
+**Why not copy-paste a "reference implementation":** a copied script has no
+mechanism keeping copies in sync. A fix applied to one project's copy has to
+be manually re-applied to every other copy, and nothing catches silent
+drift between them if that's missed — the opposite of the guarantee a
+single shared source of truth provides. (`check_sbom.py` existed as three
+near-identical per-package copies before this section was written; they
+happened to be identical, but nothing enforced it.)
+
+**Convention:** projects invoke the script directly from the submodule path,
+parameterized via CLI flags for whatever varies per call site (file paths,
+package name, etc.) rather than hardcoding project-specific values into a
+per-project copy:
+
+```yaml
+# from a package directory, e.g. packages/mcp/
+- name: SBOM freshness check
+  run: python ../../.standards/tools/check_sbom.py
+```
+
+Bumping the `.standards` submodule pointer updates the logic for every
+project that calls it — the same propagation model already used for docs.
 
 ## Dependabot and generated artifacts
 
@@ -241,8 +282,8 @@ When touching CI config, confirm it includes:
 - [ ] Lockfile/hash verification step
 - [ ] `pip-audit` step (fails build on high/critical)
 - [ ] Build fails if `--require-hashes` install fails
-- [ ] SBOM freshness check (regenerate and diff against the committed SBOM,
-      normalizing volatile fields) — fails the build if out of date
+- [ ] SBOM freshness check via `.standards/tools/check_sbom.py` (not a
+      per-project copy) — fails the build if out of date
 - [ ] Dependabot PRs refresh generated artifacts (SBOM, and lockfile hashes if
       transitively affected) — manually before merge, or via an SBOM-only
       auto-regeneration workflow; auto-merge gated on a required CI check
