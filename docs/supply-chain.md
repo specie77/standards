@@ -134,27 +134,48 @@ one of two ways:
     side (e.g. copy-pasting a workflow between repos, or a developer
     auditing PATs across their GitHub account). Apply the same convention
     to any other repo-scoped automation secret, not just this one.
-  - **The auto-merge gate must allow the refresh bot's actor, not just
-    `dependabot[bot]`.** Once the refresh workflow pushes its fix commit, the CI
-    run it re-triggers has that bot as its actor — so the *green* run is authored
-    by the App/PAT identity, **not** `dependabot[bot]`. An auto-merge condition
-    gated on `workflow_run.actor.login == 'dependabot[bot]'` will skip that green
-    run and the PR never merges (observed: all checks green, auto-merge silently
-    skipped). Gate on the branch prefix (`startsWith(head_branch, 'dependabot/')`
-    — the real safety boundary, since only Dependabot opens those branches) and
-    allow **both** actors:
+  - **Gate the auto-merge on the branch prefix, not the actor.** Once the
+    refresh workflow pushes its fix commit, the green CI run it re-triggers is
+    authored by the App/PAT identity, **not** `dependabot[bot]` — so any
+    condition gated on `workflow_run.actor.login == 'dependabot[bot]'` skips
+    that green run and the PR never merges (observed: all checks green,
+    auto-merge silently skipped). The simplest and preferred fix is to **not
+    gate on actor at all**: `startsWith(head_branch, 'dependabot/')` is the real
+    safety boundary (only Dependabot opens those branches) and is actor-agnostic
+    by construction, so it needs no App-slug value to look up and keep in sync:
 
     ```yaml
     if: >
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success' &&
-      startsWith(github.event.workflow_run.head_branch, 'dependabot/') &&
-      (github.event.workflow_run.actor.login == 'dependabot[bot]' ||
-       github.event.workflow_run.actor.login == '<refresh-app-slug>[bot]')
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
     ```
 
-Either way, do not auto-merge without a required CI status check gating the merge
-(see `CLAUDE.md`, Dependabot) — otherwise a stale SBOM lands on the default branch.
+    (If you have a specific reason to allow-list actors instead — e.g. other
+    bots also open branches under that prefix — allow **both** `dependabot[bot]`
+    and the refresh App's `<slug>[bot]`; allow-listing only `dependabot[bot]`
+    reintroduces the skip above.)
+
+  - **`fetch-metadata` needs a PR event context — it errors in a `workflow_run`
+    job.** So the patch/minor-vs-major classification that decides whether to
+    auto-merge at all cannot live in the `workflow_run` merge job. Split the two
+    concerns: a `pull_request_target` job runs `fetch-metadata` + `pip-audit` and
+    **approves** eligible (patch/minor) PRs; the `workflow_run`-on-CI-success job
+    then **merges** only PRs carrying that approval. The approving review is the
+    durable cross-workflow signal — it survives the refresh bot's push wherever no
+    "dismiss stale approvals" branch-protection rule strips it (which is exactly
+    the Free-plan case where you'd use this pattern). Reference implementation:
+    specie77/trading-system `.github/workflows/dependabot-approve.yml` +
+    `dependabot-merge.yml`.
+
+Either way, the merge must be gated on CI success — otherwise a stale SBOM lands
+on the default branch. Achieve the gate with a **required status check** where
+branch protection is available, or **structurally** via the `workflow_run`-on-CI-
+success trigger above where it is not — notably a private repo on the GitHub Free
+plan, where the branch-protection API returns `403: "Upgrade to GitHub Pro or make
+this repository public"` and `gh pr merge --auto` therefore has no required check
+to wait on and merges immediately, before CI finishes. See `CLAUDE.md`,
+"Auto-merging Dependabot PRs", for the two options and when each applies.
 
 ## Dependabot on hash-locked lockfiles: freeze exact-pinned pairs
 
@@ -286,7 +307,9 @@ When touching CI config, confirm it includes:
       per-project copy) — fails the build if out of date
 - [ ] Dependabot PRs refresh generated artifacts (SBOM, and lockfile hashes if
       transitively affected) — manually before merge, or via an SBOM-only
-      auto-regeneration workflow; auto-merge gated on a required CI check
+      auto-regeneration workflow; auto-merge gated on CI success (a required
+      status check, or a `workflow_run`-on-CI-success trigger where branch
+      protection is unavailable — see "Dependabot and generated artifacts")
 - [ ] Hash-locked pip lockfiles compiled from `pyproject.toml`/`uv`: any
       exact-pinned dependency pair (e.g. `pydantic`/`pydantic-core`) is `ignore`d
       on each pip Dependabot entry so it moves only via recompile (NOT
