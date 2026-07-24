@@ -157,6 +157,19 @@ rm /tmp/gh_body.md
 
 Use the `Write` tool to create the temp file — not `cat` or `echo` in Bash (those are restricted). Multiline strings in `--body` break the `gh *` allowlist pattern match and trigger permission prompts.
 
+## Git Commit Messages
+
+Same principle as `gh --body-file`: never pass a multiline commit message inline (a `-m "line1\n\nbody…"` string, or a large heredoc body). Multiline content in the command string breaks the Bash allowlist pattern match and triggers a permission prompt on every commit. Write the message to a temp file with the `Write` tool, then commit from the file:
+
+```
+# 1. Write tool → /tmp/commit_msg.txt   (full message incl. the Co-Authored-By trailer)
+# 2. Bash:
+git commit -F /tmp/commit_msg.txt
+rm /tmp/commit_msg.txt
+```
+
+Use `git -C <repo>` when not already in the repo dir. This keeps the Bash command a short, allowlist-matchable prefix (`git commit -F …`) with no multiline content — no approval prompt.
+
 ## Documentation
 
 - Feature requests and future enhancements → open a GitHub issue.
