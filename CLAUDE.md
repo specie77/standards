@@ -149,10 +149,10 @@ After a PR is merged and its remote branch deleted on GitHub, run `git fetch --p
 Never pass multiline content inline to `gh` commands. Write the body to a temp file and use `--body-file`:
 
 ```
-# 1. Write tool → /tmp/gh_body.md
+# 1. Write tool → /private/tmp/gh_body.md
 # 2. Bash:
-gh pr create --title "..." --body-file /tmp/gh_body.md
-rm /tmp/gh_body.md
+gh pr create --title "..." --body-file /private/tmp/gh_body.md
+rm /private/tmp/gh_body.md
 ```
 
 Use the `Write` tool to create the temp file — not `cat` or `echo` in Bash (those are restricted). Multiline strings in `--body` break the `gh *` allowlist pattern match and trigger permission prompts.
@@ -162,10 +162,10 @@ Use the `Write` tool to create the temp file — not `cat` or `echo` in Bash (th
 Same principle as `gh --body-file`: never pass a multiline commit message inline (a `-m "line1\n\nbody…"` string, or a large heredoc body). Multiline content in the command string breaks the Bash allowlist pattern match and triggers a permission prompt on every commit. Write the message to a temp file with the `Write` tool, then commit from the file:
 
 ```
-# 1. Write tool → /tmp/commit_msg.txt   (full message incl. the Co-Authored-By trailer)
+# 1. Write tool → /private/tmp/commit_msg.txt   (full message incl. the Co-Authored-By trailer)
 # 2. Bash:
-git commit -F /tmp/commit_msg.txt
-rm /tmp/commit_msg.txt
+git commit -F /private/tmp/commit_msg.txt
+rm /private/tmp/commit_msg.txt
 ```
 
 Use `git -C <repo>` when not already in the repo dir. This keeps the Bash command a short, allowlist-matchable prefix (`git commit -F …`) with no multiline content — no approval prompt.
