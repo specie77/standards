@@ -37,8 +37,62 @@ Before adding any new package:
 - Be suspicious of brand-new packages with very low adoption being pulled in
   as transitive dependencies.
 - If this project has any internally-named packages, check that the name
-  isn't claimable on public PyPI (dependency confusion risk). If it is,
-  recommend namespace prefixing or a scoped private index.
+  isn't claimable on public PyPI (dependency confusion risk). Check it
+  explicitly rather than assuming — a 404 from
+  `https://pypi.org/pypi/<name>/json` means the name is unclaimed and anyone
+  may take it:
+
+  ```bash
+  curl -s -o /dev/null -w "%{http_code}\n" https://pypi.org/pypi/<name>/json
+  ```
+
+  Retry a `503` before concluding anything; PyPI outages return one, and it is
+  easy to misread as "not registered".
+
+### Mitigating a claimable internal name
+
+Registering placeholder packages on PyPI is the reflex, and it is often the
+wrong move. It creates a permanent public artifact — the name, and whatever
+metadata is attached — which is a poor trade for a **private** project whose
+whole point is having no public footprint. PyPI also does not release a name for
+reuse after deletion, so it cannot be undone.
+
+It is also aimed at the wrong threat. A placeholder stops *someone else*
+claiming the name. It does nothing about the failure that actually occurs:
+an install command that reaches an index it was never supposed to reach.
+
+**Prefer proving provenance in CI.** Where internal packages are installed from
+a local path (`pip install --no-deps -e ../core`, a monorepo path dependency, a
+vendored checkout), the protection lives entirely in flags on install commands.
+Drop `--no-deps` from one line — while tidying, while debugging, while adding a
+call site — and pip may resolve the name from an index. If the name has been
+claimed by then, a package with the right name installs and runs, **and nothing
+says so**: the build stays green, and the tests still pass, because a stub only
+has to expose the right module names to get that far.
+
+Assert it instead. **PEP 610**: pip writes a `direct_url.json` into a
+distribution's `.dist-info` **only** when it was installed from a direct URL or
+local path. A package pulled from an index has no such file. That makes the
+provenance checkable after the fact, rather than inferred from the command line:
+
+```yaml
+- name: Local packages came from this repo, not an index
+  run: python ../../.standards/tools/check_local_install.py my-core my-app
+```
+
+`tools/check_local_install.py` in this repo is the canonical implementation —
+invoke it from the submodule path, parameterised with the package names, rather
+than copying it (see "Shared tooling scripts"). It fails on three conditions:
+the package is missing `direct_url.json` (came from an index), the package is
+not installed at all, or its direct URL is not a `file://` path.
+
+Place the step **immediately after the install step** and before the audit and
+test steps, so a wrong install is caught before anything executes code from it.
+
+Registering placeholders and asserting provenance are not exclusive; the
+assertion is the one that catches the real failure, so add it first. Namespace
+prefixing remains an option for a new project, but is disruptive on an
+established one and does not address the index-reachability problem either.
 
 ## SBOM
 
@@ -305,6 +359,11 @@ When touching CI config, confirm it includes:
 - [ ] Build fails if `--require-hashes` install fails
 - [ ] SBOM freshness check via `.standards/tools/check_sbom.py` (not a
       per-project copy) — fails the build if out of date
+- [ ] Any internally-named package installed from a local path: a
+      `.standards/tools/check_local_install.py` step immediately after install,
+      asserting it did not come from an index (PEP 610 `direct_url.json`) —
+      required whenever the name is unregistered on public PyPI and therefore
+      claimable
 - [ ] Dependabot PRs refresh generated artifacts (SBOM, and lockfile hashes if
       transitively affected) — manually before merge, or via an SBOM-only
       auto-regeneration workflow; auto-merge gated on CI success (a required
