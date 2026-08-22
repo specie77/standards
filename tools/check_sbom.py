@@ -67,10 +67,14 @@ def _pinned_names(requirements_path: Path) -> set[str]:
 
 
 def _filter_to_pinned(sbom: dict, pinned_names: set[str]) -> dict:
+    components_in = sbom.get("components", [])
     kept_refs = {
-        c["bom-ref"] for c in sbom["components"] if _normalize_name(c["name"]) in pinned_names
+        c["bom-ref"] for c in components_in if _normalize_name(c["name"]) in pinned_names
     }
-    components = [c for c in sbom["components"] if c["bom-ref"] in kept_refs]
+    components = [c for c in components_in if c["bom-ref"] in kept_refs]
+    # Drops entries for refs that are not kept components — including the
+    # root metadata.component, which CycloneDX documents routinely reference
+    # from `dependencies` but never list under `components`.
     dependencies = [d for d in sbom.get("dependencies", []) if d["ref"] in kept_refs]
     for dep in dependencies:
         if "dependsOn" in dep:
@@ -85,7 +89,9 @@ def _normalize(sbom: dict) -> dict:
         ({**c, "bom-ref": bom_ref_map[c["bom-ref"]]} for c in sbom["components"]),
         key=lambda c: c["bom-ref"],
     )
-    dependencies = sorted(bom_ref_map[d["ref"]] for d in sbom["dependencies"])
+    dependencies = sorted(
+        bom_ref_map[d["ref"]] for d in sbom.get("dependencies", []) if d["ref"] in bom_ref_map
+    )
 
     return {
         **{k: v for k, v in sbom.items() if k not in VOLATILE_KEYS and k not in ("components", "dependencies")},
@@ -110,7 +116,28 @@ def main() -> int:
     pinned_names = _pinned_names(args.requirements)
     raw_generated = _filter_to_pinned(json.loads(result.stdout), pinned_names)
     generated = _normalize(raw_generated)
-    committed = _normalize(json.loads(args.sbom.read_text()))
+
+    try:
+        committed_doc = json.loads(args.sbom.read_text())
+    except FileNotFoundError:
+        if not args.fix:
+            print(
+                f"{args.sbom} does not exist. Generate it with --fix.",
+                file=sys.stderr,
+            )
+            return 1
+        committed_doc = {"components": [], "dependencies": []}
+    except json.JSONDecodeError as exc:
+        print(f"{args.sbom} is not valid JSON: {exc}", file=sys.stderr)
+        return 1
+
+    # Filter the committed side to the same pinned-name set as the generated
+    # one. Without this, a resolution artifact already baked into the
+    # committed SBOM (a base image's bundled setuptools, say) is compared
+    # against a generated SBOM that excludes it, failing the check with zero
+    # real dependency drift — the specie77/standards#3 failure mode, from
+    # the other direction.
+    committed = _normalize(_filter_to_pinned(committed_doc, pinned_names))
 
     if generated != committed:
         if args.fix:

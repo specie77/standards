@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      tools: ${{ steps.filter.outputs.tools }}
+      docs: ${{ steps.filter.outputs.docs }}
+      agents: ${{ steps.filter.outputs.agents }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        id: filter
+        with:
+          filters: |
+            tools:
+              - 'tools/**'
+              - '.github/workflows/ci.yml'
+            docs:
+              - '**/*.md'
+              - '.github/workflows/ci.yml'
+            agents:
+              - 'docs/subagent/**'
+              - 'tools/lint_agents.py'
+              - '.github/workflows/ci.yml'
+
+  # tools/check_sbom.py is executed by every project that vendors this repo as
+  # a .standards submodule. A regression here fails open — it would pass a
+  # stale SBOM everywhere at once, silently.
+  test-tools:
+    needs: changes
+    if: needs.changes.outputs.tools == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.11"
+
+      # No lockfile: the tools are stdlib-only by design, and the two CI
+      # dependencies are pinned inline. Adding a requirements file here would
+      # pull this repo into the SBOM/Dependabot machinery it exists to
+      # describe, for two dev tools and zero runtime dependencies.
+      - name: Unit tests
+        run: |
+          pip install pytest==9.1.1
+          python -m pytest tools/tests/ -v
+
+      - name: SAST (bandit)
+        run: |
+          pip install bandit==1.9.4
+          bandit -r tools/ -ll --exclude tools/tests
+
+  lint-agents:
+    needs: changes
+    if: needs.changes.outputs.agents == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.11"
+      # `claude plugin validate` exits 0 on a bare agents directory whatever
+      # it contains, so this is the only thing checking these files.
+      - name: Validate subagent frontmatter
+        run: python tools/lint_agents.py docs/subagent/
+
+  check-links:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.11"
+      # Consuming projects follow these cross-references through the
+      # submodule; a renamed file or renumbered heading breaks them silently.
+      - name: Check intra-repo links and anchors
+        run: python tools/check_links.py .
+
+  # Ungated: these docs are dense with credential-shaped examples, and a real
+  # value pasted in while debugging is the failure mode worth catching.
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0   # gitleaks scans full history, not the working tree
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -euo pipefail
+          curl -sSfL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+      - name: Scan full history
+        run: ./gitleaks detect --source . --redact --verbose
