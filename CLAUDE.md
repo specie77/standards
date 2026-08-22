@@ -291,7 +291,32 @@ jobs:
 
 **The shared-dependency gotcha:** if a Dockerfile does `COPY` on a path outside its own package directory (a shared/core library, a common `lib/`, a vendored submodule), that copied content is baked into the image — so the build/push job's `if:` condition must also include that shared path's filter output, not just the package's own directory. A monorepo with `packages/core` consumed by `packages/api` and `packages/worker` needs each image's build-push gate to be `needs.changes.outputs.api == 'true' || needs.changes.outputs.core == 'true'` (and likewise for `worker`) — gating on `api` alone means a core-only change silently ships a stale image, passing CI with no rebuild. Trace every `COPY`/`ADD` line in each Dockerfile back to its filter path before finalizing the gate condition.
 
-**When adding this pattern to an existing pipeline**, audit for the same gap: list every Dockerfile's `COPY`/`ADD` sources, cross-reference against the paths-filter definitions, and add any missing filter output to that image's build/push `if:` condition.
+**The self-validation gotcha — the pipeline and its shared scripts need a filter too.** Path filters are written around *product* code, so the two things a pipeline is built from routinely gate nothing:
+
+- **the workflow file itself** — editing `ci.yml` does not run the jobs defined in `ci.yml`, so a broken step ships and only fails on the next unrelated push, where it looks like that push's fault;
+- **the `.standards` submodule** — bumping the pointer runs none of the jobs that invoke its scripts. `check_sbom.py` and `check_local_install.py` are called from the per-package test jobs, so a broken shared script lands on `main` having never executed once — in *every* project that bumps to it. This is the sharp edge of the propagation model in `docs/supply-chain.md` ("Shared tooling scripts"): one pointer bump changes behaviour everywhere, so it must be validated somewhere.
+
+Both were observed unguarded in specie77/voice-meal-planner (PR #346).
+
+Add **one** filter output covering the pipeline definition, the submodule, and `.gitmodules`, and gate the **test** jobs on it:
+
+```yaml
+citooling:
+  - '.github/workflows/ci.yml'
+  - '.standards/**'
+  - '.gitmodules'
+```
+
+```yaml
+core-test:
+  if: needs.changes.outputs.core == 'true' || needs.changes.outputs.citooling == 'true'
+```
+
+Keep it a **separate output** rather than folding those paths into a package's filter, and keep it off the image build/push jobs. Folding it in buys a QEMU-emulated multi-arch build for a workflow comment — which is the budget this whole section exists to protect. Test jobs are cheap; image jobs are not.
+
+A change that touches only `ci.yml` and the submodule pointer is its own first test: if the test jobs do not run on that PR, the gate is still missing.
+
+**When adding this pattern to an existing pipeline**, audit for all three gaps: list every Dockerfile's `COPY`/`ADD` sources and cross-reference against the paths-filter definitions, adding any missing filter output to that image's build/push `if:` condition; then confirm the workflow file and any vendored tooling submodule gate the jobs that consume them.
 
 ## New Agent Checklist
 When adding a new agent directory (e.g. `foo-trader/`) that contains a
