@@ -339,7 +339,30 @@ artifact map moves out of the prompt and the coordinator points at it.
 **Done when:** linter passes on the remaining agents; no subagent frontmatter contains
 `WebFetch`, `WebSearch`, or (in 2a) `Agent`; ownership facts appear in exactly one file.
 
-### Phase 3 — mechanize · fixes F1, F3, F4, F8, F9
+### Phase 3 — mechanize · fixes F1, F3, F8, F9, F16 — **DONE 2026-08-23**
+
+`lint_agents.py` now rejects `memory:` outright (any value, not just an invalid
+one), validates `Agent(x)` scopes against the definitions actually present,
+validates `color`, and — given `--artifact-map docs/delivery-artifacts.md` —
+cross-checks each prompt's owned-paths rule against the map in both directions.
+It fails loudly if the map parses to zero rows, so a table-format change cannot
+leave the check silently passing. `main()` became `main_argv(argv)` so it is
+testable. `tools/tests/test_lint_agents.py` and
+`tools/tests/test_check_agent_settings.py` added: 95 tests pass, bandit clean.
+
+`tools/check_agent_settings.py` added (F1): a stdlib-only script a consuming
+project runs in CI against its `.claude/settings.json`, asserting every required
+deny plus `sandbox.enabled`, printing why each rule exists when it fails, and
+flagging an `allow` entry written as though it restricted something. Documented
+in `docs/subagents.md` and added to the CI integration checklist in
+`docs/supply-chain.md`. F16 resolved by documenting in the linter why `model` is
+required rather than allowed to default.
+
+Note for whoever picks up Phase 4: `tools/check_local_install.py` (added on main
+in `1186408`) has no tests either — the same F9 argument applies to it, and it is
+also executed by consuming projects. Not in this plan's scope; worth its own pass.
+
+Original steps:
 
 1. **`tools/lint_agents.py`:**
    - Reject **any** `memory:` value outright (F3), with the README's reasoning in the

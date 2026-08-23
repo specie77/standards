@@ -72,7 +72,7 @@ Write a **handoff packet** for each dispatch — goal, files to read, files to w
 
 ## Required project configuration
 
-The frontmatter alone is not a security boundary. Add this to `.claude/settings.json` before using the set unattended:
+The frontmatter alone is not a security boundary. Add this to `.claude/settings.json` before using the set unattended — and verify it with `.standards/tools/check_agent_settings.py` in CI (below) rather than trusting that you did:
 
 ```jsonc
 {
@@ -107,6 +107,14 @@ Notes on each piece:
 - **An `allow` entry is not a restriction.** It auto-approves a call so it runs without prompting; it does not deny anything left off the list. There is no `allow`-implies-default-deny behaviour, so an entry like `WebFetch(domain:docs.python.org)` constrains nothing — it only removes a prompt for that one domain. To actually restrict a capability, deny it, or don't grant the tool in the frontmatter at all. (This set takes the second route: no subagent holds a web tool.)
 - **The `Agent(...)` denies are a genuine second layer**, evaluated by the permission system rather than by frontmatter, so they hold even if a prompt is edited. No subagent in this set holds an `Agent` grant at all — none of them can spawn another — so these denies are pure backstop: they keep that true if a prompt is ever edited to add one. `general-purpose` and `claude` are named because both hold every tool in the session.
 - **`sandbox.enabled` is what closes the secrets gap for `qa-tester`.** `Read`/`Edit` deny rules cover Claude's file tools and the file commands Claude Code recognises inside Bash (`cat`, `head`, `tail`, `sed`) — they do **not** cover a Python or Node script that opens `.env` itself. The sandbox is enforced for every Bash command *and its child processes*. Pair it with a `PreToolUse` hook allowlisting the project's test runner.
+- **Verify the configuration in CI, don't trust that it was applied.** Everything above is a per-project manual step, and a manual step nothing checks is not a control — the same argument that replaced "remember to regenerate the SBOM" with a freshness check. Run the shared checker from the submodule path, per `docs/supply-chain.md` § "Shared tooling scripts":
+
+  ```yaml
+  - name: Subagent permission check
+    run: python .standards/tools/check_agent_settings.py
+  ```
+
+  It asserts every deny rule above plus `sandbox.enabled`, explains why each one exists when it fails, and flags an `allow` entry written as though it were a restriction. It reads the settings file only — no Claude Code invocation, no network.
 - **The `SubagentStop` hook** turns two prompt-level promises into checks: reject a QA report claiming a pass with no recorded command, and reject a requirements file containing `TBD`. Exit code 2 blocks the subagent from stopping; the matcher filters on `agent_type`. Same move this repo made when it replaced "remember to regenerate the SBOM" with a CI freshness check.
 
 ## Design notes
