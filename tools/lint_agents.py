@@ -2,16 +2,20 @@
 
 `claude plugin validate` exits 0 on a bare agents directory regardless of its
 contents — a space-bearing name, a nonexistent tool, a bogus model, or a file
-with no frontmatter at all all pass (see docs/subagent/README-agents.md). So
-nothing validates these files today, and a typo ships to every project that
-vendors this repo on the next submodule bump.
+with no frontmatter at all all pass (see docs/subagents.md). So nothing
+validates these files today, and a typo ships to every project that vendors
+this repo on the next submodule bump.
 
 This checks the things that silently break a subagent at load time. Stdlib
 only, so CI needs no dependencies.
 
+The definitions live in agents/ at the repo root, not under docs/: consuming
+projects symlink that directory into .claude/agents/, which Claude Code scans
+recursively, so it must contain agent definitions and nothing else.
+
 Usage:
 
-    python tools/lint_agents.py docs/subagent/
+    python tools/lint_agents.py agents/
 """
 
 import argparse
