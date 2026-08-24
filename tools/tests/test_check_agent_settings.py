@@ -242,6 +242,18 @@ def test_main_passes_on_good_settings(tmp_path):
     assert cas.main_argv(["--settings", str(path)]) == 0
 
 
+def test_success_output_says_sandbox_is_not_a_verified_boundary(tmp_path, capsys):
+    """An `ok` here means the file declares the right things. It cannot mean the
+    sandbox boundary exists — this script reads a file, and enforcement happens
+    somewhere it cannot see. Printing that on every green run stops the check
+    implying a protection it never verified."""
+    path = write(tmp_path, GOOD_SETTINGS)
+    cas.main_argv(["--settings", str(path)])
+    out = capsys.readouterr().out
+    assert "not a verified" in out
+    assert "VS Code" in out
+
+
 def test_main_fails_on_incomplete_settings(tmp_path, capsys):
     settings = json.loads(json.dumps(GOOD_SETTINGS))
     settings["permissions"]["deny"].remove("Edit(./.claude/**)")
