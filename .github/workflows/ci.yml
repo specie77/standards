@@ -30,6 +30,12 @@ jobs:
               - '.github/workflows/ci.yml'
             docs:
               - '**/*.md'
+              # The checker itself, or the job never runs on the change that
+              # breaks it — CLAUDE.md § "The self-validation gotcha". The
+              # agents filter below already does this for lint_agents.py;
+              # this one did not, and a PR editing check_links.py skipped
+              # check-links entirely (observed on PR #13).
+              - 'tools/check_links.py'
               - '.github/workflows/ci.yml'
             agents:
               - 'agents/**'
