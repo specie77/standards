@@ -359,6 +359,12 @@ When touching CI config, confirm it includes:
 - [ ] Build fails if `--require-hashes` install fails
 - [ ] SBOM freshness check via `.standards/tools/check_sbom.py` (not a
       per-project copy) — fails the build if out of date
+- [ ] If the project symlinks `.standards/agents` into `.claude/agents/`:
+      `.standards/tools/check_agent_settings.py` runs and passes — the subagent
+      permission rules **and the `SubagentStop` report hook** in
+      `.claude/settings.json` are per-project manual steps, and this is what
+      stops them being a "remember to" (see
+      `.standards/docs/subagents.md` § "Required project configuration")
 - [ ] Any internally-named package installed from a local path: a
       `.standards/tools/check_local_install.py` step immediately after install,
       asserting it did not come from an index (PEP 610 `direct_url.json`) —

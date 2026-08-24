@@ -1,0 +1,19 @@
+# Only `github-actions` applies to this repo.
+#
+# `pip`: tools/ is stdlib-only and there is no requirements.txt or
+# pyproject.toml for Dependabot to read — the two CI dev tools (pytest,
+# bandit) are pinned inline in the workflow, where github-actions updates
+# do not reach them. Re-pin them during the periodic review below, or add a
+# pip entry here if a lockfile is ever introduced.
+#
+# `docker`: no Dockerfile in this repo.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: tuesday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
