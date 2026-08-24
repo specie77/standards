@@ -93,7 +93,10 @@ The frontmatter alone is not a security boundary. Add this to `.claude/settings.
     "SubagentStop": [
       { "matcher": "qa-tester",
         "hooks": [{ "type": "command",
-                    "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/qa-report-check.sh" }] }
+                    "command": "python3 ${CLAUDE_PROJECT_DIR}/.standards/tools/qa_report_check.py --check qa-report" }] },
+      { "matcher": "business-analyst",
+        "hooks": [{ "type": "command",
+                    "command": "python3 ${CLAUDE_PROJECT_DIR}/.standards/tools/qa_report_check.py --check none --forbid-tbd 'docs/delivery/1*.md' --forbid-tbd 'docs/delivery/30-*.md'" }] }
     ]
   }
 }
@@ -115,8 +118,14 @@ Notes on each piece:
     run: python .standards/tools/check_agent_settings.py
   ```
 
-  It asserts every deny rule above plus `sandbox.enabled`, explains why each one exists when it fails, and flags an `allow` entry written as though it were a restriction. It reads the settings file only — no Claude Code invocation, no network.
-- **The `SubagentStop` hook** turns two prompt-level promises into checks: reject a QA report claiming a pass with no recorded command, and reject a requirements file containing `TBD`. Exit code 2 blocks the subagent from stopping; the matcher filters on `agent_type`. Same move this repo made when it replaced "remember to regenerate the SBOM" with a CI freshness check.
+  It asserts every deny rule above, `sandbox.enabled`, and that a `SubagentStop` hook for `qa-tester` runs `qa_report_check.py`; explains why each one exists when it fails; and flags an `allow` entry written as though it were a restriction. It reads the settings file only — no Claude Code invocation, no network. The hook is matched by script filename, not by the exact command, so a project may add its own flags.
+- **The `SubagentStop` hook** turns three prompt-level promises into checks, using the shared `.standards/tools/qa_report_check.py` — invoked from the submodule path, not copied per project, per `docs/supply-chain.md` § "Shared tooling scripts". Exit code 2 blocks the subagent from stopping and returns the message to it; the matcher filters on `agent_type`. Same move this repo made when it replaced "remember to regenerate the SBOM" with a CI freshness check. What it asserts:
+
+  - a QA report claiming `PASS` carries a `Command:` line recording what was actually run — `qa-tester.md` rule 3 (the template's own `<exact command>` placeholder does not count);
+  - the report has a non-empty `## Files I changed` section — rule 10, which is what makes the `git diff` review above possible;
+  - no file matching the `--forbid-tbd` globs contains `TBD` — `business-analyst.md` rules 1 and 2, checked against the files on disk rather than against what the report claims.
+
+  Its limit, stated plainly: it cannot verify a recorded command was really run, and nothing at this layer can. What it removes is the silent omission — a pass with no command, or a session with no declared writes, now has to be an explicit false statement rather than a blank space. It also **fails open** on its own failure (no payload, unreadable transcript, no assistant message found), loudly on stderr, because a hook that wedges a session on its own bug gets deleted, and a deleted hook fails open permanently instead of once. `--strict` inverts that where a project would rather block.
 
 Every mechanical claim in these notes — what a path rule is consulted for, `deny` over `allow`, what the sandbox does and does not cover, the hook's exit-code semantics — is listed in § "Mechanical claims — verification status" below with the Claude Code version it was last checked against. Most are currently marked **Not verified**. Read them as this design's assumptions, and re-check them on a major bump.
 
@@ -136,7 +145,9 @@ This table is where verification is recorded. **Re-run the checks on every major
 | An `allow` entry auto-approves and denies nothing; there is no allow-implies-default-deny | § Required project configuration — why the old `WebFetch` allow was removed | **Not verified** — issue #9 |
 | The OS sandbox covers Bash **child processes**, closing the `.env` read gap | § Required project configuration — `sandbox.enabled` | **Not verified** — issue #9 |
 | The sandbox **permits writes inside the project directory**, so it does not close the equivalent write gap | § Required project configuration — the write-gap note; `qa-tester.md` rule 9 | **Not verified** — issue #9 |
-| `SubagentStop` exit code 2 blocks the subagent from stopping; the matcher filters on `agent_type` | § Required project configuration — the hook | **Not verified** — issue #9 |
+| `SubagentStop` exit code 2 blocks the subagent from stopping and returns stderr to it; the matcher filters on `agent_type` | § Required project configuration — the hook; `tools/qa_report_check.py` | **Not verified** — issue #9 |
+| The hook payload on stdin carries `transcript_path`, `cwd`, `agent_type`, and `stop_hook_active` | `tools/qa_report_check.py` — how it finds the report and avoids a stop loop | **Not verified** — issue #9 |
+| The transcript is JSONL, one entry per turn, assistant text in `message.content[].text` | `tools/qa_report_check.py` — reading the final report | **Not verified** — issue #9 |
 | `AskUserQuestion` is always stripped from subagents | § Design notes — why all three batch into `## Open Questions` | **Not verified** — issue #9 |
 | Subagent nesting is on by default up to 3 levels; only `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` disables it | § Design notes — why *not granting* `Agent` is the control | **Not verified** — issue #9 |
 | The first ~200 lines of `MEMORY.md` are injected into the subagent's **system prompt** at startup | § `memory:` — the reason for the prohibition | **Not verified** — issue #9 |

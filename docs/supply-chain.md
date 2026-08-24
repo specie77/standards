@@ -361,8 +361,9 @@ When touching CI config, confirm it includes:
       per-project copy) — fails the build if out of date
 - [ ] If the project symlinks `.standards/agents` into `.claude/agents/`:
       `.standards/tools/check_agent_settings.py` runs and passes — the subagent
-      permission rules in `.claude/settings.json` are a per-project manual step,
-      and this is what stops them being a "remember to" (see
+      permission rules **and the `SubagentStop` report hook** in
+      `.claude/settings.json` are per-project manual steps, and this is what
+      stops them being a "remember to" (see
       `.standards/docs/subagents.md` § "Required project configuration")
 - [ ] Any internally-named package installed from a local path: a
       `.standards/tools/check_local_install.py` step immediately after install,

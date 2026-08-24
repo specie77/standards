@@ -29,6 +29,19 @@ GOOD_SETTINGS = {
         ]
     },
     "sandbox": {"enabled": True},
+    "hooks": {
+        "SubagentStop": [
+            {
+                "matcher": "qa-tester",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "python3 ${CLAUDE_PROJECT_DIR}/.standards/tools/qa_report_check.py --check qa-report",
+                    }
+                ],
+            }
+        ]
+    },
 }
 
 
@@ -78,7 +91,7 @@ def test_sandbox_must_be_literally_true(value):
 
 def test_empty_settings_reports_everything():
     problems = cas.check_settings({})
-    assert len(problems) == len(cas.REQUIRED_DENIES) + 1  # + sandbox
+    assert len(problems) == len(cas.REQUIRED_DENIES) + 2  # + sandbox, + hook
 
 
 def test_allow_entry_never_satisfies_a_deny():
@@ -89,7 +102,7 @@ def test_allow_entry_never_satisfies_a_deny():
         "sandbox": {"enabled": True},
     }
     problems = cas.check_settings(settings)
-    assert len(problems) == len(cas.REQUIRED_DENIES)
+    assert len(problems) == len(cas.REQUIRED_DENIES) + 1  # + hook
 
 
 def test_webfetch_allow_is_flagged_as_not_a_restriction():
@@ -149,7 +162,14 @@ def test_jsonc_comments_are_tolerated(tmp_path):
           "Agent(claude)"
         ]
       },
-      "sandbox": { "enabled": true }
+      "sandbox": { "enabled": true },       // OS-level
+      "hooks": {
+        "SubagentStop": [
+          { "matcher": "qa-tester",
+            "hooks": [{ "type": "command",
+                        "command": "python3 ${CLAUDE_PROJECT_DIR}/.standards/tools/qa_report_check.py" }] }
+        ]
+      }
     }"""
     settings, error = cas.load_settings(write(tmp_path, text))
     assert error is None
@@ -164,6 +184,54 @@ def test_a_double_slash_inside_a_string_survives_comment_stripping():
 def test_invalid_json_is_reported(tmp_path):
     settings, error = cas.load_settings(write(tmp_path, "{not json"))
     assert settings is None and "not valid JSON" in error
+
+
+# --- the SubagentStop hook -------------------------------------------------
+
+
+def test_missing_subagent_stop_hook_is_caught():
+    """Wiring the hook is a manual per-project step, so it needs the same
+    treatment as the deny rules — otherwise the two report promises it checks
+    stay promises on the one subagent holding Bash."""
+    settings = json.loads(json.dumps(GOOD_SETTINGS))
+    del settings["hooks"]
+    problems = cas.check_settings(settings)
+    assert any("SubagentStop" in p for p in problems)
+
+
+def test_hook_for_another_subagent_does_not_satisfy_it():
+    settings = json.loads(json.dumps(GOOD_SETTINGS))
+    settings["hooks"]["SubagentStop"][0]["matcher"] = "business-analyst"
+    assert any("SubagentStop" in p for p in cas.check_settings(settings))
+
+
+def test_wildcard_matcher_satisfies_it():
+    settings = json.loads(json.dumps(GOOD_SETTINGS))
+    settings["hooks"]["SubagentStop"][0]["matcher"] = "*"
+    assert cas.check_settings(settings) == []
+
+
+def test_a_different_script_does_not_satisfy_it():
+    """A hook that runs something else is not this check, however plausible
+    the filename."""
+    settings = json.loads(json.dumps(GOOD_SETTINGS))
+    settings["hooks"]["SubagentStop"][0]["hooks"][0]["command"] = (
+        ".claude/hooks/qa-report-check.sh"
+    )
+    assert any("SubagentStop" in p for p in cas.check_settings(settings))
+
+
+def test_extra_flags_on_the_hook_command_are_allowed():
+    settings = json.loads(json.dumps(GOOD_SETTINGS))
+    settings["hooks"]["SubagentStop"][0]["hooks"][0]["command"] += " --strict"
+    assert cas.check_settings(settings) == []
+
+
+@pytest.mark.parametrize("hooks", [None, [], "nonsense", {"SubagentStop": "x"}])
+def test_malformed_hooks_block_is_caught_not_crashed(hooks):
+    settings = json.loads(json.dumps(GOOD_SETTINGS))
+    settings["hooks"] = hooks
+    assert any("SubagentStop" in p for p in cas.check_settings(settings))
 
 
 # --- main() ----------------------------------------------------------------

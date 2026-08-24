@@ -40,6 +40,13 @@ The rules are not interchangeable and none is decorative:
       OS-level, enforced for every Bash command AND its child processes. The
       only layer that closes the subprocess gap above.
 
+  hooks.SubagentStop -> tools/qa_report_check.py
+      The check on qa-tester's own report: a PASS carries the command that
+      produced it, and every file written is declared. Wiring it is a manual
+      per-project step like everything else here, so it is asserted here for
+      the same reason the denies are. Checked by the script's filename, not by
+      the exact command line, so a project may add its own flags.
+
 An `allow` entry is deliberately not checked for, and never satisfies a
 requirement here: allow auto-approves, it does not restrict. Only `deny` and
 the sandbox are boundaries.
@@ -141,6 +148,43 @@ def load_settings(path: Path) -> tuple[dict | None, str | None]:
         return None, f"{path} is not valid JSON: {exc}"
 
 
+HOOK_SCRIPT = "qa_report_check.py"
+
+
+def check_subagent_stop_hook(settings: dict) -> list[str]:
+    """Assert a SubagentStop hook runs the shared report check for qa-tester.
+
+    Matched on the script filename rather than the whole command, so a project
+    is free to add flags or change how python is invoked. A hook wired to a
+    per-project copy of the script instead of the submodule path still passes
+    the filename test — that trade is deliberate: this is a check that the
+    control exists, and docs/supply-chain.md § "Shared tooling scripts" is the
+    argument for where it should live.
+    """
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        hooks = {}
+    matchers = hooks.get("SubagentStop")
+    if not isinstance(matchers, list):
+        matchers = []
+
+    for matcher in matchers:
+        if not isinstance(matcher, dict):
+            continue
+        if str(matcher.get("matcher", "")) not in ("qa-tester", "*", ""):
+            continue
+        for hook in matcher.get("hooks") or []:
+            if isinstance(hook, dict) and HOOK_SCRIPT in str(hook.get("command", "")):
+                return []
+
+    return [
+        f"no SubagentStop hook for `qa-tester` running {HOOK_SCRIPT} — without "
+        "it, 'never report a pass you did not run' and 'declare every file you "
+        "wrote' stay prompt-level promises on the one subagent holding Bash. "
+        "See .standards/docs/subagents.md § 'Required project configuration'"
+    ]
+
+
 def check_settings(settings: dict) -> list[str]:
     problems = []
 
@@ -173,6 +217,8 @@ def check_settings(settings: dict) -> list[str]:
                 "one — an allow entry auto-approves and restricts nothing. To "
                 "restrict, deny it or do not grant the tool in the frontmatter."
             )
+
+    problems.extend(check_subagent_stop_hook(settings))
 
     sandbox = settings.get("sandbox")
     enabled = isinstance(sandbox, dict) and sandbox.get("enabled") is True
