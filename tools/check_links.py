@@ -47,7 +47,14 @@ def headings_to_anchors(text: str) -> set[str]:
         title = re.sub(r"`([^`]*)`", r"\1", title)
         title = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", title)
         slug = re.sub(r"[^\w\s-]", "", title.lower()).strip()
-        slug = re.sub(r"[\s_]+", "-", slug)
+        # One hyphen per space, and underscores kept — github-slugger removes
+        # punctuation and then replaces each space individually, so
+        # `Dependabot & artifacts` slugs to `dependabot--artifacts` with two
+        # hyphens, and `snake_case` keeps its underscore. Collapsing runs (or
+        # converting `_`) diverges from the anchor a browser actually jumps to,
+        # in both directions: a correct link reported broken, and a broken one
+        # passing.
+        slug = re.sub(r"\s", "-", slug)
         seen = counts.get(slug, 0)
         counts[slug] = seen + 1
         anchors.add(slug if seen == 0 else f"{slug}-{seen}")
@@ -101,10 +108,10 @@ def check_file(path: Path, root: Path) -> list[str]:
     return problems
 
 
-def main() -> int:
+def main_argv(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", nargs="?", default=".", type=Path)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     root = args.root.resolve()
     files = sorted(p for p in root.rglob("*.md") if ".git" not in p.parts)
@@ -123,4 +130,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main_argv())
