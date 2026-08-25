@@ -109,6 +109,45 @@ def test_invalid_model_is_rejected(tmp_path):
     assert any("model 'gpt-4'" in p for p in problems)
 
 
+@pytest.mark.parametrize("model", sorted(lint_agents.VALID_MODEL_ALIASES))
+def test_every_alias_is_accepted(tmp_path, model):
+    """`fable` was missing from this set, so the linter rejected a legitimate
+    definition. Parametrising over the constant means a future alias is added
+    in one place."""
+    text = GOOD.replace("model: sonnet", f"model: {model}")
+    assert lint_agents.check_file(write(tmp_path, text)) == []
+
+
+@pytest.mark.parametrize(
+    "model", ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"]
+)
+def test_full_model_ids_are_accepted(tmp_path, model):
+    """The frontmatter accepts a pinned model ID, not only an alias. Rejecting
+    one is the same failure as rejecting `fable`: a valid config that CI stops."""
+    text = GOOD.replace("model: sonnet", f"model: {model}")
+    assert lint_agents.check_file(write(tmp_path, text)) == []
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "sonnett",            # typo'd alias
+        "claude_opus_5",      # underscores, not the documented shape
+        "Claude-Opus-5",      # capitalised
+        "opus-5",             # missing the claude- prefix
+        "claude-",            # prefix alone
+        "gpt-4",              # another provider
+    ],
+)
+def test_model_shapes_that_are_not_valid_are_still_rejected(tmp_path, model):
+    """Accepting full IDs by shape must not turn the check into a no-op — these
+    are the realistic typos it still has to catch."""
+    text = GOOD.replace("model: sonnet", f"model: {model}")
+    assert any(
+        "model" in p for p in lint_agents.check_file(write(tmp_path, text))
+    ), f"{model!r} was accepted"
+
+
 def test_invalid_color_is_rejected(tmp_path):
     text = GOOD.replace("color: green", "color: chartreuse")
     problems = lint_agents.check_file(write(tmp_path, text))
