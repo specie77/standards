@@ -44,11 +44,17 @@ If the `agents` directory didn't exist when the session started, restart once; o
 
 **`claude plugin validate .claude/agents` is not a load check.** Pointed at a bare `.claude/agents` directory it exits 0 on garbage — a space-bearing `name`, a nonexistent tool, a bogus `model`, an invalid `memory` value, even a file with no frontmatter at all all pass. Pointed at a real plugin root it fails for the opposite reason (`No manifest found`). Treat "validation passed" as "the directory exists".
 
-Ask a session what it can actually see instead, and assert the three names appear:
+Ask a session what it can actually see instead, and assert the three names appear.
+
+**On the CLI**, one shot, scriptable:
 
 ```bash
 claude --print "List every subagent type available via the Agent tool."
 ```
+
+**Under the VS Code extension** that command does not exist: the extension bundles a private CLI copy and deliberately does not add `claude` to `PATH`, so `--print` needs the [standalone CLI install](https://code.claude.com/docs/en/setup). Either install it and run the above in the integrated terminal, or check from inside a chat session instead — ask it to list the subagent types available via the Agent tool, and confirm `business-analyst`, `solutions-architect`, and `qa-tester` all appear.
+
+Either way the check is the same one: what a running session actually sees, not what the directory contains. `lint_agents.py` in CI covers the file contents; this covers discovery. Both are needed — a definition can be valid and still not be loaded, and the symlink that makes discovery work is itself undocumented behaviour (see the verification table below).
 
 ## Use
 

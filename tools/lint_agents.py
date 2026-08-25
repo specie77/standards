@@ -24,7 +24,19 @@ import sys
 from pathlib import Path
 
 REQUIRED_KEYS = {"name", "description", "tools", "model"}
-VALID_MODELS = {"opus", "sonnet", "haiku", "inherit"}
+
+# Aliases, plus `inherit`. The alias set is what the subagents reference
+# documents; `fable` was missing here until 2026-08-24 and the linter rejected
+# a legitimate definition using it.
+VALID_MODEL_ALIASES = {"opus", "sonnet", "haiku", "fable", "inherit"}
+
+# A full model ID is also accepted (`claude-opus-5`,
+# `claude-haiku-4-5-20251001`). Matched by shape rather than enumerated: the
+# real list changes with every release, and a linter carrying a stale copy of it
+# fails valid configs — the failure this pattern exists to stop. The shape check
+# still catches the realistic typo (`sonnett`, `claude_opus_5`, a bare version),
+# which is the same bargain VALID_COLORS makes below.
+MODEL_ID_RE = re.compile(r"^claude-[a-z0-9]+(-[a-z0-9]+)*$")
 
 # `model` is required rather than allowed to default. An omitted model inherits
 # the main session's, which changes behaviour silently on a model migration —
@@ -187,8 +199,11 @@ def check_file(
         problems.append(f"name {name!r} does not match filename stem {path.stem!r}")
 
     model = front.get("model")
-    if model and model not in VALID_MODELS:
-        problems.append(f"model {model!r} is not one of {sorted(VALID_MODELS)}")
+    if model and model not in VALID_MODEL_ALIASES and not MODEL_ID_RE.match(model):
+        problems.append(
+            f"model {model!r} is not one of {sorted(VALID_MODEL_ALIASES)} "
+            "and is not a full model ID (e.g. claude-opus-5)"
+        )
 
     if "memory" in front:
         problems.append(MEMORY_PROHIBITED)
