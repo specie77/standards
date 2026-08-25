@@ -38,7 +38,11 @@ The rules are not interchangeable and none is decorative:
 
   sandbox.enabled
       OS-level, enforced for every Bash command AND its child processes. The
-      only layer that closes the subprocess gap above.
+      only layer that closes the subprocess gap above — on the surfaces that
+      enforce it. It appears NOT to be enforced under the VS Code / Cursor
+      extensions, so this script requiring the key is not evidence the boundary
+      exists; see docs/subagents.md § "Running under the VS Code extension".
+      Required anyway: correct on the CLI, harmless where inert.
 
   hooks.SubagentStop -> tools/qa_report_check.py
       The check on qa-tester's own report: a PASS carries the command that
@@ -149,6 +153,21 @@ def load_settings(path: Path) -> tuple[dict | None, str | None]:
 
 
 HOOK_SCRIPT = "qa_report_check.py"
+
+# Printed on success. An "ok" here means the settings FILE says the right
+# things; it cannot mean the sandbox boundary exists, because this script reads
+# a file and the enforcement happens elsewhere. Saying so on every green run is
+# the point: a check that quietly implies a protection it never verified is the
+# failure mode this whole repo argues against.
+SANDBOX_SURFACE_WARNING = (
+    "\nnote: `sandbox.enabled` is a declaration in this file, not a verified\n"
+    "boundary. It appears NOT to be enforced under the VS Code / Cursor\n"
+    "extensions (no --sandbox flag on the spawned binary; /sandbox unavailable;\n"
+    "anthropics/claude-code#32814). It is also Bash-only wherever it does apply:\n"
+    "file tools, MCP servers and hooks run on the host regardless. For unattended\n"
+    "runs use a dev container. See .standards/docs/subagents.md\n"
+    "§ 'Running under the VS Code extension'."
+)
 
 
 def check_subagent_stop_hook(settings: dict) -> list[str]:
@@ -269,6 +288,7 @@ def main_argv(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"{args.settings}: ok")
+    print(SANDBOX_SURFACE_WARNING)
     return 0
 
 
