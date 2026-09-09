@@ -8,6 +8,8 @@ The charter and the coordination between the three are the **main session's** jo
 
 **Where the files are.** The definitions live in `agents/` at the repo root; this page lives in `docs/`. That split is deliberate: consuming projects symlink `agents/` into `.claude/agents/`, which Claude Code scans **recursively**, so anything in that directory is treated as an agent definition. A README sitting beside them would be scanned as one. Keep `agents/` to definitions only.
 
+> **Installing into a project?** [`subagent-deployment.md`](subagent-deployment.md) is the ordered runbook — symlink, settings, Bash allowlist, CI wiring, and the one-time test that proves the report check actually blocks before you rely on it. This page is the reasoning behind each step.
+
 ## Install — symlink the submodule, don't copy
 
 `docs/supply-chain.md` § "Shared tooling scripts" rules out copy-paste distribution: a copied file has no mechanism keeping copies in sync, a fix applied in one project has to be manually re-applied everywhere else, and nothing catches silent drift. Prompts get tweaked in place far more casually than code does, so the odds are worse here than for `check_sbom.py`.
@@ -198,7 +200,7 @@ Three statuses, and they are not interchangeable. **Documented** — the officia
 | `SubagentStop` matcher filters on `agent_type` | § Required project configuration — the hook | **Documented** — [hooks](https://code.claude.com/docs/en/hooks) |
 | Symlinked directory and symlinked file under `.claude/agents/` are both discovered; a bare `.standards/agents/` is not | § Install — the whole distribution mechanism | **Observed** `2.1.239`, Linux — recursive scan is documented, symlink following is not |
 | `claude plugin validate` on a bare agents directory exits 0 regardless of contents | § Verify they loaded — why `lint_agents.py` exists | **Observed** `2.1.239`, Linux |
-| `SubagentStop` **command** hook exiting 2 blocks the stop and returns stderr to the subagent | `tools/qa_report_check.py` | **Undocumented** — specified for *prompt* hooks only; command-hook semantics are not — issue #9 |
+| `SubagentStop` **command** hook exiting 2 blocks the stop and returns stderr to the subagent | `tools/qa_report_check.py` | **Undocumented** — specified for *prompt* hooks only; command-hook semantics are not. Settle it with `subagent-deployment.md` § "Verify the referee" — issue #9 |
 | The hook payload carries `stop_hook_active` | `tools/qa_report_check.py` — avoiding a stop loop | **Undocumented** — `transcript_path`, `cwd`, `agent_type` are documented; this one is not — issue #9 |
 | The transcript is JSONL, one entry per turn, assistant text in `message.content[].text` | `tools/qa_report_check.py` — reading the final report | **Undocumented** — no official schema exists; community tooling agrees on this shape — issue #9 |
 | `AskUserQuestion` is always stripped from subagents | § Design notes — why all three batch into `## Open Questions` | **Undocumented** — issue #9 |
