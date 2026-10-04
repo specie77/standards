@@ -86,13 +86,20 @@ Prompt injection is the AI-era equivalent of SQL injection: untrusted content in
 - Validate LLM outputs before acting on them. A model completion is untrusted input — apply the same schema/regex validation used for any external source.
 - Grant agents only the tool permissions required for their stated purpose. Minimal privilege limits the blast radius of a successful injection.
 
-## Claude API — Explicit `thinking` Configuration
+## Claude API — Explicit `thinking` and `effort` Configuration
 
-Never omit the `thinking` parameter on a Claude API call and rely on the model's default — the default is not stable across model versions (e.g. `claude-sonnet-4-6` defaulted to thinking-off when omitted; `claude-sonnet-5` defaults to adaptive thinking when omitted). An omitted parameter that silently changes behavior on a model upgrade is exactly the kind of drift these standards exist to prevent.
+Never omit the `thinking` parameter or `output_config.effort` on a Claude API call and rely on the model's defaults — neither is stable across model versions. `claude-sonnet-4-6` defaulted to thinking-off when `thinking` was omitted; `claude-sonnet-5` defaults to adaptive. `claude-sonnet-5-5` keeps the `high` effort default but recalibrated what each level means, so an omitted effort silently changes behavior across that upgrade. A parameter that silently changes behavior on a model upgrade is exactly the kind of drift these standards exist to prevent.
 
-**Set `thinking={"type": "disabled"}` explicitly by default.** Only enable it (`{"type": "adaptive"}`, or the model's supported equivalent) when the call actually benefits from extended reasoning — open-ended analysis, multi-step planning, ambiguous input. A call that forces a single tool result via `tool_choice`, does structured extraction, or sits on a latency-sensitive user-facing path almost never needs it.
+**`{"type": "disabled"}` is no longer a portable default.** `claude-sonnet-5-5` and `claude-opus-5-5` reject it with a 400, and `claude-opus-5` accepts it only at effort `high` or below. Pick one of these two forms per call site and always send an explicit effort with it:
 
-Before enabling thinking on a given call site, confirm with the developer that reasoning is actually needed there — don't enable it speculatively "for better results." Extra reasoning adds latency and token cost, and — per the model's own migration notes — a `thinking`-omitted call can silently switch behavior on the next model upgrade in either direction. Explicit configuration makes intent durable across model migrations instead of inheriting whatever a new model's default happens to be.
+- **Default — adaptive thinking at `low` effort:** `thinking={"type": "adaptive"}, output_config={"effort": "low"}`. At `low` the model skips thinking on most simple requests, so this is the closest equivalent to the old thinking-off default, and it works on every current model. Use it for structured extraction, classification, short summaries, and latency-sensitive paths.
+- **Thinking-off — `between_tools`:** `thinking={"type": "between_tools"}` with effort `high` or below. This is the lowest thinking setting on `claude-sonnet-5-5`, which is the **only model that accepts it** (any other model returns a 400). Use it only when a call must stay thinking-off and is pinned to that model. Never put any other field in that `thinking` object. If client-side code re-sends the same request to another model (a retry, fallback, or router), drop the `between_tools` setting first.
+
+Raise effort above `low` (`medium` for agentic or multi-step decisions, `high` and up only with a measured quality gain) when the call actually benefits from reasoning: open-ended analysis, multi-step planning, ambiguous input. Before raising effort on a given call site, confirm with the developer that the extra reasoning is needed there. Don't raise it speculatively "for better results": extra reasoning adds latency and token cost. Thinking tokens count toward `max_tokens` even when their text isn't returned, so size `max_tokens` for thinking plus the reply.
+
+Read responses by block `type`, never by position: with thinking on, or with `between_tools`, a response can begin with a `thinking` block, so `content[0].text` is not the reply. Check `stop_reason == "refusal"` before reading content: a safety-classifier decline is an HTTP 200, not an exception.
+
+Explicit configuration makes intent durable across model migrations instead of inheriting whatever a new model's default happens to be. Re-check this section's model list against the model's migration notes on every upgrade.
 
 ## Agent Interface Documentation
 
