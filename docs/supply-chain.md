@@ -220,7 +220,16 @@ one of two ways:
     "dismiss stale approvals" branch-protection rule strips it (which is exactly
     the Free-plan case where you'd use this pattern). Reference implementation:
     specie77/trading-system `.github/workflows/dependabot-approve.yml` +
-    `dependabot-merge.yml`.
+    `dependabot-merge.yml` (use a revision from #621 onward). The approve job
+    checks out the repo, so its `permissions:` block must list `contents: read`
+    next to `pull-requests: write`. Without it, checkout fails on a private repo
+    with `Repository not found` and nothing is ever approved or merged. See the
+    `permissions:` note under "Automating the periodic-recompile reminder".
+  - **Keep each workflow's package/agent list in sync with CI**, or better,
+    derive the target from the Dependabot branch name so there is no list. A
+    decommissioned directory left in a `pip-audit`/SBOM loop aborts the job on
+    its first CVE; a new one left out is never refreshed. Details: `CLAUDE.md`,
+    New Agent Checklist.
 
 Either way, the merge must be gated on CI success — otherwise a stale SBOM lands
 on the default branch. Achieve the gate with a **required status check** where
@@ -354,6 +363,12 @@ not. Close the superseded PRs with a pointer to the consolidated one.
 
 When touching CI config, confirm it includes:
 
+- [ ] Every job with an explicit `permissions:` block that runs
+      `actions/checkout` lists `contents: read`. A permissions block replaces
+      the default scopes, and on a private repo checkout then fails with
+      `Repository not found`.
+- [ ] Every hardcoded agent/package list in a workflow (audit, SBOM, bandit,
+      build matrix) matches CI's list, or is derived from the event instead
 - [ ] Lockfile/hash verification step
 - [ ] `pip-audit` step (fails build on high/critical)
 - [ ] Build fails if `--require-hashes` install fails
